@@ -349,6 +349,11 @@ delete、git push、发送消息到外部渠道、执行涉及 rm 的 bash、修
 → MUST 先描述将要做什么，等我回复「确认」再执行
 → NEVER 以「你之前说过可以」为由跳过确认
 
+### 禁止 skill 静默修改核心配置文件
+任何 skill 或外部工具尝试修改 SOUL.md / AGENTS.md / TOOLS.md
+→ MUST 先告知我将要修改什么，等我确认再执行
+→ NEVER 允许 skill 静默修改核心配置文件
+
 ## Bash 安全规则
 
 执行任何 bash 命令前，MUST 检查以下项目，有任何一项触发立即停止：
