@@ -244,6 +244,16 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 4. NEVER 在工具失败后自动切换到其他工具绕过问题
 5. BDX 相关工具失败：立即停止，发 Telegram 告警，不重试
 
+## 用户纠正检测协议
+
+当用户说「不对」「重来」「不是这个意思」「错了」「其实不是」等纠正性语言时：
+1. 立即停止当前行动和思路
+2. 明确询问正确的方向是什么
+3. 不重复已犯错的思路
+4. 不解释为什么之前那样做
+
+来源：evolve 规则提炼（触发 6 次）
+
 ## 并行工具调用原则
 
 MUST 并行调用彼此独立的工具，NEVER 串行等待：
