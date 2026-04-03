@@ -261,11 +261,16 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
     MINIMAX_API_KEY = "sk-cp-DtqXh99hmgbdLdYAyGJBi22-15cNDkRT08C8ZRhwSWz6P7wprqHfPIAsc5VgR2OlZqn-Jw8aYI-cZpnoWnScq2jS99nc-MfFASRsDHoJP5QTJ38Mxc1Nylw"
     MINIMAX_EMBED_URL = "https://api.minimaxi.com/v1/embeddings"
 
-    def get_embedding(text: str, model: str = "minimax-embedding") -> list[float]:
-        """调用 MiniMax API 获取文本 embedding（1024维）"""
+    def get_embedding(text: str) -> tuple[list[float], bool]:
+        """
+        调用 MiniMax bge-m3 (embo1) 获取文本 embedding（1024维）。
+        API format: POST /v1/embeddings, body: {"model":"embo1","type":"db_compute","texts":[...]}
+        返回 (vector, is_fallback)。is_fallback=True 表示使用了 hash 伪向量。
+        """
         payload = json.dumps({
-            "model": model,
-            "input": text[:2000]  # 截断避免超限
+            "model": "embo1",
+            "type": "db_compute",
+            "texts": [text[:2000]],  # 截断避免超限，MiniMax 要求 texts 数组
         }).encode("utf-8")
         req = urllib.request.Request(
             MINIMAX_EMBED_URL,
@@ -279,18 +284,29 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 result = json.loads(resp.read())
-                return result["data"][0]["embedding"]
+                vectors = result.get("vectors")
+                if vectors and vectors[0]:
+                    return vectors[0], False
+                # vectors 为 null 说明账户余额不足
+                raise ValueError(f"MiniMax returned null vectors: {result.get('base_resp')}")
         except Exception as e:
-            print(f"[self_eval] embedding API failed: {e}, using fallback hash vector", file=sys.stderr)
-            # Fallback: 基于文本内容的确定性伪向量（保证相同文本产生相同向量）
+            err_str = str(e)
+            if "null vectors" in err_str:
+                print(f"[self_eval] MiniMax embedding returned null (insufficient balance) — FALLBACK: hash pseudo vector", file=sys.stderr)
+            else:
+                print(f"[self_eval] MiniMax embedding API failed: {e} — FALLBACK: hash pseudo vector", file=sys.stderr)
+            # FALLBACK: 基于文本内容的确定性伪向量（相同文本产生相同向量，但语义质量差，仅作保底）
             import hashlib
             h = hashlib.sha256(text.encode("utf-8")).digest()
             vec = [0.0] * 1024
             for i in range(min(len(h), 1024)):
                 vec[i] = (h[i] / 255.0) * 2 - 1  # [-1, 1] 范围
-            return vec
+            return vec, True
 
-    vector = get_embedding(content)
+    vector, is_fallback = get_embedding(content)
+
+    if is_fallback:
+        print(f"[self_eval] WARNING: using FALLBACK hash vector for reflection {record_id}", file=sys.stderr)
 
     db = lancedb.connect(str(LANCE_DB_PATH))
     tbl = db.open_table("memories")
@@ -307,7 +323,7 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
             "metadata": json.dumps(meta, ensure_ascii=False),
         }
     ])
-    print(f"[self_eval] stored reflection: {record_id}")
+    print(f"[self_eval] stored reflection: {record_id} (fallback={is_fallback})")
     return True
 
 
