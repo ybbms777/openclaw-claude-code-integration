@@ -341,6 +341,61 @@ MUST 暂停并等待我确认，不得自行决定：
 NEVER 以"我认为用户想要"为由跳过确认。
 NEVER 把"先试试看"用于不可逆操作。
 
+## 权限模式
+
+当前模式：`bypass`（完全信任，所有操作直接执行）
+
+### 三种权限模式
+
+| 模式 | 名字 | 行为 |
+|------|------|------|
+| `plan` | 规划模式 | 只读操作直接放行；写入/删除/外部发送一律先问 |
+| `auto` | 自动模式 | 低风险操作自动放行；中/高风险操作弹窗确认；YOLO分类器辅助判断 |
+| `bypass` | 完全信任 | 所有操作直接执行，不弹窗（当前默认） |
+
+### 沙箱自动放行（auto/plan模式）
+
+以下命令类别直接放行，无需确认：
+
+**只读命令**：
+```
+ls, pwd, cd, cat, head, tail, find, grep, which, file
+stat, tree, dirname, basename, readlink
+```
+
+**Git 只读**：
+```
+git status, git log, git diff, git show, git branch
+git remote -v, git tag, git stash list
+```
+
+**系统只读**：
+```
+ps aux, top -l 1, df -h, du -h, free -m
+hostname, uptime, uname -a, whoami, id
+```
+
+**环境查询**：
+```
+env, echo $VAR, printenv, locale
+```
+
+**解释**：这些操作只能读东西，不会改文件、不会删数据、不会对外发信息。
+
+### Deny 优先原则
+
+规则冲突时，**拒绝优先于允许**：
+- 不确定操作是否安全 → 先停下问
+- 路径模糊 → 先确认路径再执行
+- 命令看起来可疑 → 拒绝执行并说明理由
+
+### Denial Tracking（拒绝追踪）
+
+在 auto 模式下：
+- 连续 3 次拒绝同类正常操作 → 报告给 Boss，建议调整规则
+- 总计 20 次拒绝 → 暂停 auto 模式，切回 plan 模式等待人工确认
+- 拒绝原因自动记录到 self-eval，驱动 evolve 规则优化
+
 ## 工具权限分层
 
 所有工具操作按风险分三层：
