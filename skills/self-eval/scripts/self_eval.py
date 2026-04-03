@@ -254,8 +254,43 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
         "created_at": now_ms,
     }
 
-    # 用 embedding 字段（如果可用）或零向量
-    vector = [0.0] * 1024  # 占位向量
+
+    # ─── MiniMax embedding ──────────────────────────────────────────────
+    import urllib.request, urllib.error
+
+    MINIMAX_API_KEY = "sk-cp-DtqXh99hmgbdLdYAyGJBi22-15cNDkRT08C8ZRhwSWz6P7wprqHfPIAsc5VgR2OlZqn-Jw8aYI-cZpnoWnScq2jS99nc-MfFASRsDHoJP5QTJ38Mxc1Nylw"
+    MINIMAX_EMBED_URL = "https://api.minimaxi.com/v1/embeddings"
+
+    def get_embedding(text: str, model: str = "minimax-embedding") -> list[float]:
+        """调用 MiniMax API 获取文本 embedding（1024维）"""
+        payload = json.dumps({
+            "model": model,
+            "input": text[:2000]  # 截断避免超限
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            MINIMAX_EMBED_URL,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {MINIMAX_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read())
+                return result["data"][0]["embedding"]
+        except Exception as e:
+            print(f"[self_eval] embedding API failed: {e}, using fallback hash vector", file=sys.stderr)
+            # Fallback: 基于文本内容的确定性伪向量（保证相同文本产生相同向量）
+            import hashlib
+            h = hashlib.sha256(text.encode("utf-8")).digest()
+            vec = [0.0] * 1024
+            for i in range(min(len(h), 1024)):
+                vec[i] = (h[i] / 255.0) * 2 - 1  # [-1, 1] 范围
+            return vec
+
+    vector = get_embedding(content)
 
     db = lancedb.connect(str(LANCE_DB_PATH))
     tbl = db.open_table("memories")
