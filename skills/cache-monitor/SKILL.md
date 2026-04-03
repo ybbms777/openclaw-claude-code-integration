@@ -66,4 +66,9 @@ python3 ~/.openclaw/workspace/skills/cache-monitor/scripts/cache_monitor.py --ch
 
 ## 注册方式
 
-通过 OpenClaw 的 `PreAgentStart` 钩子自动触发，无需手动运行。
+通过 OpenClaw `agent:bootstrap` 钩子自动触发。
+
+> ⚠️ OpenClaw 当前没有 `PreAgentStart` 内置钩子。
+> 本 skill 使用 `agent:bootstrap` 作为近似替代——在 agent 初始化阶段触发，早于 session 正式启动。
+
+已注册钩子：`~/.openclaw/hooks/cache-monitor-hook/`

@@ -54,7 +54,8 @@
 └── docs/
     ├── 01-architecture.md             # 设计思路详解
     ├── 02-prompt-engineering.md       # 提示词工程对比分析
-    └── 03-memory-system.md            # 记忆系统架构说明
+    ├── 03-memory-system.md           # 记忆系统架构说明
+    └── 04-session-hooks.md           # 钩子注册说明（self_eval / cache_monitor / evolve）
 ```
 
 ---

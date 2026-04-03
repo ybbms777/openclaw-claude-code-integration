@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+pytest.ini
+tests/
+skills/*/scripts/__pycache__/
+skills/*/skills/

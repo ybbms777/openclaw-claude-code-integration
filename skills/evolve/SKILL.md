@@ -18,6 +18,12 @@
 帮我创建 /evolve 命令的执行脚本，注册为 slash command。
 ```
 
+## Hook 注册
+
+已注册 `gateway:startup` 钩子：`~/.openclaw/hooks/evolve-hook/`
+
+钩子在 gateway 启动时输出提醒（evolve.py 本身仍需手动 `/evolve` 触发）。
+
 ---
 
 ## 使用方式
