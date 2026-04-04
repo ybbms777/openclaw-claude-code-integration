@@ -40,7 +40,7 @@
 ### GitHub 同步
 频率： 每次重大配置变更后
 步骤：
-1. 发送：「帮我把最新的 AGENTS.md、SOUL.md 和新增 skill 推送到 GitHub ybbms777/openclaw-claude-code-integration」
+1. 发送：「帮我把最新的 AGENTS.md、SOUL.md 和新增 skill 推送到 GitHub YOUR_GITHUB_USERNAME/openclaw-claude-code-integration」
 2. 确认 commit 内容后推送
 
 ---

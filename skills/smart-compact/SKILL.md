@@ -1,6 +1,6 @@
 ---
 name: smart-compact
-description: 智能压缩决策 skill。根据当前 session 上下文类型自动选择压缩策略（BDX量化/代码开发/日常对话/混合），分析后报告预计保留率，等 Boss 确认后再执行。注册为 /smart-compact 命令。
+description: 智能压缩决策 skill。根据当前 session 上下文类型自动选择压缩策略（量化策略量化/代码开发/日常对话/混合），分析后报告预计保留率，等 Boss 确认后再执行。注册为 /smart-compact 命令。
 allowed-tools: sessions_history, read_file, write_file
 model: minimax-portal/MiniMax-M2.7
 effort: medium
@@ -16,7 +16,7 @@ effort: medium
 
 | 策略 | 适用场景 | 保留 token |
 |------|----------|-----------|
-| A — BDX量化 | 回测数据、选股结果、因子分析、策略参数 | ~12k |
+| A — 量化策略量化 | 回测数据、选股结果、因子分析、策略参数 | ~12k |
 | B — 代码开发 | 大量代码块、git 操作、文件路径 | ~10k |
 | C — 日常对话 | 普通对话、寒暄、过程性讨论 | ~6k |
 | D — 混合session | 同时包含多种类型 | 按比例分配 |
@@ -46,7 +46,7 @@ python3 ~/.openclaw/workspace/skills/smart-compact/scripts/smart_compact.py --dr
 
 ## 策略详情
 
-### 策略 A — BDX量化
+### 策略 A — 量化策略量化
 **保留**：策略结论、参数配置、回测结果摘要、未完成任务  
 **丢弃**：中间计算过程、重复数据行、调试输出
 
