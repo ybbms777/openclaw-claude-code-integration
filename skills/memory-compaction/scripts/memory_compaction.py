@@ -155,6 +155,7 @@ def load_memories() -> list[dict]:
             "importance": float(row["importance"]),
             "timestamp": float(row["timestamp"]),
             "last_accessed_at": meta.get("last_accessed_at", 0),
+            "access_count": meta.get("access_count", 0),
             "l0_abstract": meta.get("l0_abstract", ""),
             "metadata": meta
         })
@@ -237,17 +238,35 @@ def cosine_sim(a: list[float], b: list[float]) -> float:
 def step1_preview(records: list[dict]) -> tuple[list[dict], list[dict]]:
     """
     返回：(待保留的记录, 待删除的记录)
+
+    删除规则（带 access_count 权重）：
+    - access_count == 0（从未检索）：importance < 0.3 且 14 天未访问 → 删除
+    - access_count == 1（检索过1次）：importance < 0.3 且 30 天未访问 → 删除
+    - access_count >= 3（高频检索）：不删除
     """
     now_ms = time.time() * 1000
     age_cutoff_ms = now_ms - AGE_DAYS_THRESHOLD * 24 * 60 * 60 * 1000
+    age_30_cutoff_ms = now_ms - 30 * 24 * 60 * 60 * 1000
 
     to_delete = []
     kept = []
     for r in records:
-        if r["importance"] < IMPORTANCE_THRESHOLD and r["last_accessed_at"] < age_cutoff_ms:
-            to_delete.append(r)
-        else:
+        access_count = r.get("access_count", 0)
+        if access_count >= 3:
+            # 高频检索：不删除
             kept.append(r)
+        elif access_count == 1:
+            # 检索过1次：延长保留到30天
+            if r["importance"] < IMPORTANCE_THRESHOLD and r["last_accessed_at"] < age_30_cutoff_ms:
+                to_delete.append(r)
+            else:
+                kept.append(r)
+        else:
+            # 从未检索（access_count == 0）：原始规则，14天
+            if r["importance"] < IMPORTANCE_THRESHOLD and r["last_accessed_at"] < age_cutoff_ms:
+                to_delete.append(r)
+            else:
+                kept.append(r)
     return kept, to_delete
 
 
@@ -389,6 +408,8 @@ def run_compaction(is_cron: bool = False) -> dict:
     if clusters:
         for cluster in clusters:
             best = max(cluster, key=lambda x: x["importance"])
+            # 保留 cluster 中最高的 access_count（不重置为 0）
+            max_access_count = max(r.get("access_count", 0) for r in cluster)
             merged_text_lines = []
             seen = set()
             for r in cluster:
@@ -404,7 +425,8 @@ def run_compaction(is_cron: bool = False) -> dict:
                 "compacted": True,
                 "source_count": len(cluster),
                 "compacted_at": int(time.time() * 1000),
-                "l0_abstract": best_abstract
+                "l0_abstract": best_abstract,
+                "access_count": max_access_count  # 保留 cluster 中最高的计数值
             })
             merged_record = {
                 "id": best["id"],
@@ -414,6 +436,7 @@ def run_compaction(is_cron: bool = False) -> dict:
                 "scope": best["scope"],
                 "importance": best["importance"],
                 "timestamp": best["timestamp"],
+                "access_count": max_access_count,
                 "metadata": new_meta
             }
             try:
