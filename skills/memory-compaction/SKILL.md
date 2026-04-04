@@ -1,83 +1,79 @@
-# memory-compaction
-
-## 用途
-
-定期清理 LanceDB 记忆碎片，防止只进不出导致检索质量下降。
-
-来源：Claude Code 的 autoDream 系统思路，针对 OpenClaw + LanceDB 重新实现。
-
+---
+name: memory-compaction
+description: LanceDB 记忆压缩 cron skill。每周日凌晨 3:00 自动执行记忆整理：(1) 备份当前 LanceDB 到 backups/YYYY-MM-DD/（保留最近4份）；(2) 删除 importance &lt; 0.3 且 14 天未访问的记忆；(3) 用 SiliconFlow bge-m3 向量相似度 ≥ 0.85 的碎片合并成一条，保留最高 importance 的 L0 摘要；(4) 任何步骤出错立即停止并发 Telegram 告警；(5) 报告发送到 Telegram 主会话。激活条件：需要创建/维护/验证每周记忆压缩 cron job，或手动触发压缩时使用。
+allowed-tools: memory_recall, memory_store, bash
+model: minimax-portal/MiniMax-M2.7
+effort: low
 ---
 
-## 安装方式
+# Memory Compaction — 记忆压缩 Cron
 
-复制到 `~/.openclaw/workspace/skills/memory-compaction/SKILL.md`，
-然后发给你的 OpenClaw：
+## 功能
 
-```
-帮我创建 memory-compaction skill 的执行脚本，并注册每周日凌晨 3 点的 cron job。
-使用现有的 SiliconFlow bge-m3 做相似度计算，不引入新的 embedding provider。
-```
+每周日 03:00 AM 自动执行记忆整理：
 
----
+**Step 0 — 备份**
+- 路径：`~/.openclaw/memory/lancedb-pro/backups/YYYY-MM-DD/`
+- 保留最近 4 份，更早的自动删除
+- 失败 → 立即停止，发 Telegram 告警
 
-## 执行逻辑
+**Step 1 — 删除**
+- 条件：`importance < 0.3` 且 `last_accessed_at < 14 天`
+- 失败 → 立即停止，发 Telegram 告警
 
-每周日 03:00 自动触发，按顺序执行：
+**Step 2 — 合并**
+- 范围：同 scope 内，向量相似度 ≥ 0.85
+- 方式：SiliconFlow `BAAI/bge-m3` + 贪心聚类
+- 合并后保留最高 importance 的 L0 abstract
+- 失败 → 立即停止，发 Telegram 告警
 
-**第一步：备份**
-```
-~/.openclaw/memory/lancedb-pro/backups/YYYY-MM-DD/
-保留最近 4 份，更早的自动删除
-```
+**Step 3 — 报告**
+- 删除条数、合并簇数、最终记忆总数
+- 备份路径发送到 Telegram
 
-**第二步：删除低价值记忆**
-- 条件：importance < 0.3 且距上次检索超过 14 天
-- 遇到任何错误：立即停止，发告警，不继续
+## 阈值
 
-**第三步：合并相似碎片**
-- 条件：同主题下向量相似度 ≥ 0.85
-- 合并策略：保留 importance 最高的那条的 L0 摘要，其余删除
+| 参数 | 值 |
+|------|---|
+| `importance_threshold` | 0.3 |
+| `age_days_threshold` | 14 天 |
+| `similarity_threshold` | 0.85 |
+| `embedding_model` | `BAAI/bge-m3`（SiliconFlow） |
+| `batch_size` | 8 |
+| `max_backups` | 4 |
 
-**第四步：输出报告**
-```
-🧠 Memory Compaction 报告
-删除：N 条
-合并：M 簇
-当前总数：X 条
-耗时：Xs
-```
+## 核心文件
 
----
+| 文件 | 作用 |
+|------|------|
+| `scripts/memory_compaction.py` | 主脚本（备份 + 删除 + 合并 + 告警） |
 
-## 首次使用建议
+## Cron Job
 
-正式执行前先做 dry-run：
+- **ID**: `memory-compaction-weekly`
+- **时间**: 每周日 03:00 AM Asia/Shanghai
+- **命令**: `python3 ~/.openclaw/workspace/skills/memory-compaction/scripts/memory_compaction.py --cron`
 
-```
-触发一次 memory-compaction 的 dry-run，只报告会删除/合并哪些，不实际执行
-```
+## 手动触发
 
-确认没有误删风险后再正式执行。
-
----
-
-## 常见问题
-
-**备份目录不存在导致失败：**
 ```bash
-mkdir -p ~/.openclaw/memory/lancedb-pro/backups
+# 完整执行（先备份，再压缩）
+python3 ~/.openclaw/workspace/skills/memory-compaction/scripts/memory_compaction.py
+
+# Dry-run（只分析，不执行写操作）
+python3 ~/.openclaw/workspace/skills/memory-compaction/scripts/memory_compaction.py --dry-run
+
+# Cron 模式（错误也发 Telegram）
+python3 ~/.openclaw/workspace/skills/memory-compaction/scripts/memory_compaction.py --cron
 ```
 
-**LanceDB SQL 不支持 list 类型：**
-执行 update() 时需排除 vector 字段，这是 LanceDB 的已知限制。
+## 熔断机制
 
----
+任何步骤（备份 / 删除 / 合并 / 写入）出错，立即：
+1. 停止后续所有步骤
+2. Telegram 发送告警
+3. 进程退出码 1
 
-## 与 compact-guardian 的关系
+## 最近运行结果
 
-| skill | 解决的问题 | 触发方式 |
-|---|---|---|
-| compact-guardian | auto-compact 失败熔断 | 实时，每次 compact 失败时 |
-| memory-compaction | LanceDB 碎片堆积 | 定时，每周日 03:00 |
-
-两者解决不同层面的问题，都需要安装。
+- **2026-04-03（首次 dry-run）**: 见 Telegram 报告

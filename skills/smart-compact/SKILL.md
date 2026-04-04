@@ -1,6 +1,9 @@
 ---
 name: smart-compact
 description: 智能压缩决策 skill。根据当前 session 上下文类型自动选择压缩策略（BDX量化/代码开发/日常对话/混合），分析后报告预计保留率，等 Boss 确认后再执行。注册为 /smart-compact 命令。
+allowed-tools: sessions_history, read_file, write_file
+model: minimax-portal/MiniMax-M2.7
+effort: medium
 ---
 
 # Smart Compact — 智能压缩策略选择
