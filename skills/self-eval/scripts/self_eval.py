@@ -258,7 +258,7 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
     # ─── SiliconFlow embedding ──────────────────────────────────────────
     import urllib.request, urllib.error
 
-    SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
+    SILICONFLOW_API_KEY = "sk-okktyfycdtebumjqwghnbrkpqdyulrzuojxcyyzsnfixkspz"
     SILICONFLOW_EMBED_URL = "https://api.siliconflow.cn/v1/embeddings"
 
     def get_embedding(text: str) -> list[float]:
@@ -320,6 +320,8 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
             "importance": importance,
             "timestamp": float(now_ms) / 1000,
             "metadata": json.dumps(meta, ensure_ascii=False),
+            "uri": "",
+            "access_count": 0,
         }
     ])
     print(f"[self_eval] stored reflection: {record_id}")
