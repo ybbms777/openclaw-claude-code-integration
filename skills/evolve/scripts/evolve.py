@@ -196,20 +196,22 @@ def generate_rules(by_category: dict) -> list:
     # 用户纠正 → 行为规则
     corrections = by_category.get("用户纠正", [])
     if corrections:
-        lance_count = sum(1 for c in corrections if c[2] == "LanceDB")
-        learnings_count = sum(1 for c in corrections if c[2] == "learnings_file")
+        # 处理兼容性：支持 2-元组 (text, metadata) 和 3-元组 (text, metadata, source)
+        lance_count = sum(1 for c in corrections if len(c) > 2 and c[2] == "LanceDB")
+        learnings_count = sum(1 for c in corrections if len(c) > 2 and c[2] == "learnings_file")
         unique_patterns = _deduplicate_patterns([c[0] for c in corrections])
         source_note = _format_source_note(lance_count, learnings_count)
         rules.append((
             "MUST",
-            f"【用户纠正检测】当用户说「不对」「重来」「其实不是」「我说的是」时，立即停止当前行动，明确询问正确方向，不重复犯错。{source_note}（触发 {len(corrections)} 次）"
+            f"【用户纠正检测】当用户说「不对」「重来」「其实不是」「我说的是」时，立即停止当前行动，明确询问正确方向，不重复犯错。{source_note}（触发次数：{len(corrections)}）"
         ))
 
     # 工具失败 → 协议规则
     failures = by_category.get("工具失败", [])
     if failures:
-        lance_count = sum(1 for f in failures if f[2] == "LanceDB")
-        learnings_count = sum(1 for f in failures if f[2] == "learnings_file")
+        # 处理兼容性：支持 2-元组 (text, metadata) 和 3-元组 (text, metadata, source)
+        lance_count = sum(1 for f in failures if len(f) > 2 and f[2] == "LanceDB")
+        learnings_count = sum(1 for f in failures if len(f) > 2 and f[2] == "learnings_file")
         source_note = _format_source_note(lance_count, learnings_count)
         rules.append((
             "NEVER",
@@ -219,8 +221,9 @@ def generate_rules(by_category: dict) -> list:
     # 上报触发 → 确认规则
     escalations = by_category.get("上报触发", [])
     if escalations:
-        lance_count = sum(1 for e in escalations if e[2] == "LanceDB")
-        learnings_count = sum(1 for e in escalations if e[2] == "learnings_file")
+        # 处理兼容性：支持 2-元组 (text, metadata) 和 3-元组 (text, metadata, source)
+        lance_count = sum(1 for e in escalations if len(e) > 2 and e[2] == "LanceDB")
+        learnings_count = sum(1 for e in escalations if len(e) > 2 and e[2] == "learnings_file")
         source_note = _format_source_note(lance_count, learnings_count)
         rules.append((
             "MUST",
