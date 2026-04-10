@@ -17,7 +17,8 @@ import urllib.request
 import urllib.error
 
 # ─── 配置 ─────────────────────────────────────────────────────────────────
-MINIMAX_API_KEY = "sk-cp-DtqXh99hmgbdLdYAyGJBi22-15cNDkRT08C8ZRhwSWz6P7wprqHfPIAsc5VgR2OlZqn-Jw8aYI-cZpnoWnScq2jS99nc-MfFASRsDHoJP5QTJ38Mxc1Nylw"
+import os
+MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_URL = "https://api.minimaxi.com/v1/chat/completions"
 
 # ─── 风险等级定义 ──────────────────────────────────────────────────────────

@@ -287,10 +287,13 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
 
     import urllib.request, urllib.error
 
-    SILICONFLOW_API_KEY = "sk-okktyfycdtebumjqwghnbrkpqdyulrzuojxcyyzsnfixkspz"
+    SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
     SILICONFLOW_EMBED_URL = "https://api.siliconflow.cn/v1/embeddings"
 
     def get_embedding(text: str) -> list[float]:
+        if not SILICONFLOW_API_KEY:
+            # Fallback to MiniMax if SiliconFlow key not set
+            return _get_embedding_minimax(text)
         payload = json.dumps({
             "model": "BAAI/bge-m3",
             "input": text[:2000],
@@ -306,24 +309,34 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read())["data"][0]["embedding"]
         except Exception:
-            MINIMAX_API_KEY = "sk-cp-DtqXh99hmgbdLdYAyGJBi22-15cNDkRT08C8ZRhwSWz6P7wprqHfPIAsc5VgR2OlZqn-Jw8aYI-cZpnoWnScq2jS99nc-MfFASRsDHoJP5QTJ38Mxc1Nylw"
-            MINIMAX_EMBED_URL = "https://api.minimaxi.com/v1/embeddings"
-            payload2 = json.dumps({"model": "minimax-embedding", "input": text[:2000]}).encode("utf-8")
-            req2 = urllib.request.Request(
-                MINIMAX_EMBED_URL, data=payload2,
-                headers={"Authorization": f"Bearer {MINIMAX_API_KEY}", "Content-Type": "application/json"},
-                method="POST"
-            )
-            try:
-                with urllib.request.urlopen(req2, timeout=15) as resp2:
-                    return json.loads(resp2.read())["data"][0]["embedding"]
-            except Exception as e2:
-                print(f"[self_eval] embedding failed: {e2}, using hash fallback", file=sys.stderr)
-                h = hashlib.sha256(text.encode("utf-8")).digest()
-                vec = [0.0] * 1024
-                for i in range(min(len(h), 1024)):
-                    vec[i] = (h[i] / 255.0) * 2 - 1
-                return vec
+            return _get_embedding_minimax(text)
+
+    def _get_embedding_minimax(text: str) -> list[float]:
+        MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
+        if not MINIMAX_API_KEY:
+            print("[self_eval] no embedding API key available, using hash fallback", file=sys.stderr)
+            h = hashlib.sha256(text.encode("utf-8")).digest()
+            vec = [0.0] * 1024
+            for i in range(min(len(h), 1024)):
+                vec[i] = (h[i] / 255.0) * 2 - 1
+            return vec
+        MINIMAX_EMBED_URL = "https://api.minimaxi.com/v1/embeddings"
+        payload2 = json.dumps({"model": "minimax-embedding", "input": text[:2000]}).encode("utf-8")
+        req2 = urllib.request.Request(
+            MINIMAX_EMBED_URL, data=payload2,
+            headers={"Authorization": f"Bearer {MINIMAX_API_KEY}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req2, timeout=15) as resp2:
+                return json.loads(resp2.read())["data"][0]["embedding"]
+        except Exception as e2:
+            print(f"[self_eval] embedding failed: {e2}, using hash fallback", file=sys.stderr)
+            h = hashlib.sha256(text.encode("utf-8")).digest()
+            vec = [0.0] * 1024
+            for i in range(min(len(h), 1024)):
+                vec[i] = (h[i] / 255.0) * 2 - 1
+            return vec
 
     vector = get_embedding(content)
     db = lancedb.connect(str(LANCE_DB_PATH))

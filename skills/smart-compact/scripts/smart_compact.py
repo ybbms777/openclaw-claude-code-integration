@@ -26,8 +26,8 @@ from pathlib import Path
 
 # ─── Telegram ───────────────────────────────────────────────────────────────
 
-BOT_TOKEN = "8466224710:AAHjJS9vzZKBWxGymgJMs7tTPT83AzEfl20"
-CHAT_ID = "8356965403"
+BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
+CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 
 
 def send_telegram(text: str) -> bool:
@@ -255,13 +255,16 @@ def format_dry_run(analysis: dict) -> str:
 
 # ─── MiniMax API ─────────────────────────────────────────────────────────
 
-MINIMAX_API_KEY = "sk-cp-DtqXh99hmgbdLdYAyGJBi22-15cNDkRT08C8ZRhwSWz6P7wprqHfPIAsc5VgR2OlZqn-Jw8aYI-cZpnoWnScq2jS99nc-MfFASRsDHoJP5QTJ38Mxc1Nylw"
+MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_URL = "https://api.minimaxi.com/v1/chat/completions"
 CONTEXT_WINDOW = 200000
 COMPACT_THRESHOLD = 0.80
 
 
 def call_minimax(prompt: str, max_tokens: int = 512) -> str:
+    if not MINIMAX_API_KEY:
+        print("[ERROR] MINIMAX_API_KEY environment variable not set", file=sys.stderr)
+        return None
     import urllib.request, urllib.error
     payload = json.dumps({
         "model": "MiniMax-M2",

@@ -96,7 +96,7 @@ LanceDB memories table
 
 ```bash
 # Clone the repo
-git clone https://github.com/ybbms777/openclaw-claude-code-integration.git
+git clone https://github.com/YOUR_GITHUB_USERNAME/openclaw-claude-code-integration.git
 cd openclaw-claude-code-integration
 
 # Install all skills

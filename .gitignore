@@ -4,11 +4,17 @@ __pycache__/
 skills/*/scripts/__pycache__/
 skills/*/skills/
 
-# 敏感文件
+# 敏感文件（严格禁止）
 TOOLS.md
-*.env
-.env*
+.env
+.env.local
+.env.production
 **/secrets*
 **/*secret*
 **/*token*
 **/*apikey*
+.DS_Store
+*.log
+
+# 但允许 template 文件用于演示
+!.env.template

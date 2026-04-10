@@ -9,7 +9,7 @@
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-Ready-blue)](https://github.com/openclaw/openclaw)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-源码泄露-green)](https://github.com/Fried-Chicken/Claude-Code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/ybbms777/openclaw-claude-code-integration)](https://github.com/ybbms777/openclaw-claude-code-integration/stargazers)
+[![Stars](https://img.shields.io/github/stars/YOUR_GITHUB_USERNAME/openclaw-claude-code-integration)](https://github.com/YOUR_GITHUB_USERNAME/openclaw-claude-code-integration/stargazers)
 
 [English](README.md) | [简体中文](README_CN.md)
 
@@ -87,7 +87,7 @@ LanceDB memories 表
 
 ```bash
 # 克隆仓库
-git clone https://github.com/ybbms777/openclaw-claude-code-integration.git
+git clone https://github.com/YOUR_GITHUB_USERNAME/openclaw-claude-code-integration.git
 cd openclaw-claude-code-integration
 
 # 安装所有 skills

@@ -13,13 +13,16 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
-# 配置
-BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "8466224710:AAHjJS9vzZKBWxGymgJMs7tTPT83AzEfl20")
-CHAT_ID = os.environ.get("TG_CHAT_ID", "8356965403")
+# 配置 — 从环境变量读取（需在 ~/.openclaw/.env 中配置）
+BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
+CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 
 def send_telegram_message(text: str) -> bool:
+    if not BOT_TOKEN or not CHAT_ID:
+        print("Error: TG_BOT_TOKEN and TG_CHAT_ID environment variables not set", file=sys.stderr)
+        return False
     data = urllib.parse.urlencode(
         {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
     ).encode("utf-8")
