@@ -109,7 +109,7 @@ def get_current_session_messages(limit: int = 50) -> list[dict]:
                     return data["messages"]
                 elif isinstance(data, list):
                     return data
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
     except Exception as e:
         print(f"[SESSION WARN] {e}", file=sys.stderr)
@@ -137,7 +137,7 @@ def get_current_session_messages(limit: int = 50) -> list[dict]:
                         inner = obj.get("message", {})
                         if isinstance(inner, dict) and inner.get("role") in ("user", "assistant"):
                             messages.append(inner)
-                except Exception:
+                except (json.JSONDecodeError, ValueError):
                     pass
     print(f"[TRANSCRIPT] loaded {len(messages)} messages", file=sys.stderr)
     return messages[-limit:] if messages else []
@@ -365,7 +365,7 @@ def compact_session(force: bool = False) -> dict:
             try:
                 obj = json.loads(line)
                 all_messages.append(obj)
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
 
     total_text = ""

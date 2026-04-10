@@ -103,11 +103,11 @@ def quick_rule_check(tool_name: str, params: dict) -> dict | None:
             try:
                 scorer = PermissionScorer()
                 score = scorer.score_command(command, context={"tool": "bash"})
-                risk_level = scorer.risk_level(score)
+                risk_level_str, _ = scorer.risk_level(score)
                 return {
-                    "risk": risk_level,
+                    "risk": risk_level_str,
                     "reason": f"动态打分 {score:.0f}/100: {command[:50]}",
-                    "action": "allow" if risk_level == "LOW" else ("confirm" if risk_level in ("MEDIUM", "HIGH") else "block"),
+                    "action": "allow" if risk_level_str == "LOW" else ("confirm" if risk_level_str in ("MEDIUM", "HIGH") else "block"),
                     "score": score,
                     "source": "scorer"
                 }

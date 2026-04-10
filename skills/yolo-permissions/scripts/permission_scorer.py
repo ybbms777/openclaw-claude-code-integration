@@ -247,11 +247,15 @@ class PermissionScorer:
             return 0.0
 
         cmd_lower = command.lower()
+        max_score = 0.0
 
-        # 逐个检查高风险模式
+        # 检查所有高风险模式，返回最高分
         for pattern, score in RISKY_PATTERNS.items():
             if re.search(pattern, cmd_lower):
-                return float(score)
+                max_score = max(max_score, float(score))
+
+        if max_score > 0:
+            return max_score
 
         # 检查管道链（可能增加风险）
         if "|" in command and len(command.split("|")) > 3:

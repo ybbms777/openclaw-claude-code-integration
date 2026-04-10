@@ -148,7 +148,7 @@ def load_reflections(limit: int = 50) -> List[Dict]:
         for _, row in df.iterrows():
             try:
                 meta = json.loads(row["metadata"]) if row["metadata"] else {}
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 meta = {}
 
             records.append({

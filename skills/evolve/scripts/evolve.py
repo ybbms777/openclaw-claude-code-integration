@@ -154,7 +154,7 @@ def classify_reflection(text: str, metadata_json: str = "") -> str:
             scores["用户纠正"] = scores.get("用户纠正", 0) + 2
         if meta.get("suppressed_until_turn", 0) > 0:
             scores["用户纠正"] = scores.get("用户纠正", 0) + 1
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         pass
 
     if max(scores.values()) == 0:
@@ -272,7 +272,7 @@ def load_pending_candidates() -> list[dict]:
             data = json.load(f)
         pending = [c for c in data.get("candidates", []) if c.get("status") == "pending"]
         return pending
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
         return []
 
 
