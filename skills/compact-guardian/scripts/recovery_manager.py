@@ -297,11 +297,23 @@ class RecoveryManager:
             # 备份现有数据库
             corrupted_path = LANCE_DB_PATH.parent / f"corrupted_{int(now)}"
             if LANCE_DB_PATH.exists():
-                shutil.move(str(LANCE_DB_PATH), str(corrupted_path))
+                if LANCE_DB_PATH.is_dir():
+                    shutil.move(str(LANCE_DB_PATH), str(corrupted_path))
+                else:
+                    shutil.copy2(str(LANCE_DB_PATH), str(corrupted_path))
+                    LANCE_DB_PATH.unlink()
                 print(f"[RECOVERY] 已将损坏数据库移至 {corrupted_path}")
 
-            # 恢复备份
-            shutil.copytree(str(backup_path), str(LANCE_DB_PATH))
+            # 确保目标目录存在
+            LANCE_DB_PATH.mkdir(parents=True, exist_ok=True)
+
+            # 恢复备份内容
+            for item in backup_path.iterdir():
+                dest = LANCE_DB_PATH / item.name
+                if item.is_dir():
+                    shutil.copytree(str(item), str(dest))
+                else:
+                    shutil.copy2(str(item), str(dest))
 
             self.state["last_recovery_at"] = now
             self._save_state()

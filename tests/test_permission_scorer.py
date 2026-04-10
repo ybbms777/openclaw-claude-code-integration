@@ -60,6 +60,11 @@ class TestPermissionScoringScenarios:
 
     def test_path_risk_hierarchy(self):
         """测试路径风险层级"""
+        import sys
+        sys.path.insert(0, str(__file__).rsplit("/", 1)[0] + "/../skills/yolo-permissions/scripts")
+        from permission_scorer import PermissionScorer
+
+        scorer = PermissionScorer()
         path_risks = [
             ("/tmp/test.txt", 15),  # 项目内
             ("/home/user/file", 30),  # 用户主目录
@@ -67,14 +72,14 @@ class TestPermissionScoringScenarios:
             ("/etc/passwd", 90),  # 系统根目录
         ]
 
+        actual_scores = []
         for path, expected_risk_level in path_risks:
-            # 验证风险按层级递增
-            pass
+            score = scorer._score_path(path)
+            actual_scores.append(score)
 
         # 验证风险递增
-        risks = [risk for _, risk in path_risks]
-        for i in range(len(risks) - 1):
-            assert risks[i] < risks[i + 1], "Path risks increase by level"
+        for i in range(len(actual_scores) - 1):
+            assert actual_scores[i] < actual_scores[i + 1], f"Path risks should increase: {actual_scores[i]} >= {actual_scores[i + 1]}"
 
     def test_command_scoring_examples(self):
         """测试命令评分示例"""

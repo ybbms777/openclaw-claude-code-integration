@@ -157,7 +157,7 @@ def load_reflections(limit: int = 50) -> List[Dict]:
                 "category": row["category"],
                 "importance": float(row["importance"]),
                 "timestamp": float(row["timestamp"]),
-                "vector": list(row["vector"]) if hasattr(row["vector"], "__iter__") else [],
+                "vector": list(row["vector"]) if isinstance(row["vector"], (list, tuple)) else [],
                 "metadata": meta,
             })
 

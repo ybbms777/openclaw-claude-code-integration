@@ -24,11 +24,33 @@ class TestLearningsExtractor:
 
     def test_markdown_generation_format(self):
         """测试 Markdown 生成格式"""
-        # 预期的表头
-        expected_headers = ["Type", "Action", "Source", "Confidence"]
+        import sys
+        sys.path.insert(0, str(__file__).rsplit("/", 1)[0] + "/../skills/evolve/scripts")
+        from learnings_extractor import extract_learning_rules, deduplicate_rules
 
-        for header in expected_headers:
-            assert len(header) > 0, f"Header {header} is valid"
+        # 测试规则提取
+        test_text = "This is a MUST do something NEVER forget to check ALWAYS verify the result"
+        rules = extract_learning_rules(test_text)
+        assert len(rules) > 0, "Should extract rules from text"
+
+        rule_types = [r[0] for r in rules]
+        assert "MUST" in rule_types, "Should extract MUST rules"
+        assert "NEVER" in rule_types, "Should extract NEVER rules"
+        assert "ALWAYS" in rule_types, "Should extract ALWAYS rules"
+
+        # 测试规则去重
+        duplicate_rules = [
+            ("MUST", "Do this"),
+            ("MUST", "Do this"),
+            ("NEVER", "Do that"),
+        ]
+        deduped = deduplicate_rules(duplicate_rules)
+        assert len(deduped) == 2, "Deduplication should reduce 3 rules to 2"
+
+        # 验证去重后保留计数
+        for rule in deduped:
+            if rule["text"] == "Do this":
+                assert rule["count"] == 2, "Duplicate rule should have count of 2"
 
     def test_similarity_threshold(self):
         """测试相似度阈值"""

@@ -34,12 +34,6 @@ PENDING_FILE = Path.home() / ".openclaw" / "workspace" / ".learnings" / "evolve-
 MAX_MEMORIES = 30
 CATEGORY = "reflection"
 
-# ─── 配置 ─────────────────────────────────────────────────────────────────
-LANCE_DB_PATH = Path.home() / ".openclaw" / "memory" / "lancedb-pro"
-LEARNINGS_FILE = Path.home() / ".openclaw" / "workspace" / ".learnings" / "LEARNINGS.md"
-MAX_MEMORIES = 30
-CATEGORY = "reflection"
-
 # ─── LanceDB 读取 ──────────────────────────────────────────────────────────
 
 def get_reflection_memories():

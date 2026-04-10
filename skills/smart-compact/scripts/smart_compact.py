@@ -413,7 +413,14 @@ def compact_session(force: bool = False) -> dict:
         for msg in recent_messages:
             f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
-    tmp_file.rename(session_file)
+    try:
+        tmp_file.rename(session_file)
+    except OSError as e:
+        print(f"[compact] 文件重命名失败: {e}", file=sys.stderr)
+        # Fallback: copy and delete
+        import shutil
+        shutil.copy2(tmp_file, session_file)
+        tmp_file.unlink()
 
     def safe_content(msg):
         c = msg.get("content") or msg.get("message", {}).get("content") or ""
