@@ -305,6 +305,17 @@ class PermissionScorer:
             pattern_score * self.weights["pattern"]
         )
 
+        # 极危险命令模式必须返回 HIGH (>=70)
+        critical_patterns = [
+            r"rm\s+-rf", r"chmod\s+777", r"git\s+push",
+            r"scp\s+", r"dd\s+", r"git\s+push\s+--force",
+        ]
+        for pattern in critical_patterns:
+            import re
+            if re.search(pattern, command, re.IGNORECASE):
+                total_score = max(total_score, 70.0)
+                break
+
         return min(100.0, max(0.0, total_score))
 
     def risk_level(self, score: float) -> Tuple[str, str]:

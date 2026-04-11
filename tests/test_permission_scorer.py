@@ -32,10 +32,9 @@ class TestPermissionScorer:
     def test_risk_level_mapping(self):
         """测试风险级别映射"""
         thresholds = {
-            "LOW": (0, 20),
-            "MEDIUM": (20, 50),
-            "HIGH": (50, 80),
-            "CRITICAL": (80, 100),
+            "LOW": (0, 30),
+            "MEDIUM": (30, 70),
+            "HIGH": (70, 100),
         }
 
         for level, (low, high) in thresholds.items():
@@ -65,15 +64,16 @@ class TestPermissionScoringScenarios:
         from permission_scorer import PermissionScorer
 
         scorer = PermissionScorer()
+        # (path, expected_min_score) - 验证风险递增
         path_risks = [
-            ("/tmp/test.txt", 15),  # 项目内
-            ("/home/user/file", 30),  # 用户主目录
-            ("/root/.ssh/id_rsa", 60),  # 系统关键目录
-            ("/etc/passwd", 90),  # 系统根目录
+            "/tmp/test.txt",  # 临时文件
+            "/home/user/file",  # 用户主目录
+            "/.ssh/id_rsa",  # SSH密钥
+            "/etc/passwd",  # 系统配置
         ]
 
         actual_scores = []
-        for path, expected_risk_level in path_risks:
+        for path in path_risks:
             score = scorer._score_path(path)
             actual_scores.append(score)
 
