@@ -19,6 +19,7 @@ import re
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any
 
 from skills.shared.logger import get_logger
 
@@ -32,15 +33,22 @@ except ImportError:
     LEARNINGS_EXTRACTOR_AVAILABLE = False
 
 # ─── 配置 ─────────────────────────────────────────────────────────────────
-LANCE_DB_PATH = Path.home() / ".openclaw" / "memory" / "lancedb-pro"
-LEARNINGS_FILE = Path.home() / ".openclaw" / "workspace" / ".learnings" / "LEARNINGS.md"
-PENDING_FILE = Path.home() / ".openclaw" / "workspace" / ".learnings" / "evolve-pending.json"
-MAX_MEMORIES = 30
-CATEGORY = "reflection"
+LANCE_DB_PATH: Path = Path.home() / ".openclaw" / "memory" / "lancedb-pro"
+LEARNINGS_FILE: Path = Path.home() / ".openclaw" / "workspace" / ".learnings" / "LEARNINGS.md"
+PENDING_FILE: Path = Path.home() / ".openclaw" / "workspace" / ".learnings" / "evolve-pending.json"
+MAX_MEMORIES: int = 30
+CATEGORY: str = "reflection"
+
+# ─── 类型别名 ─────────────────────────────────────────────────────────────
+MemoryEntry = Dict[str, str]
+LearningEntry = Dict[str, Any]
+RuleTuple = Tuple[str, str]  # (keyword, rule_text)
+CandidateDict = Dict[str, Any]
+ByCategory = Dict[str, List[Tuple[str, str, str]]]
 
 # ─── LanceDB 读取 ──────────────────────────────────────────────────────────
 
-def get_reflection_memories():
+def get_reflection_memories() -> List[MemoryEntry]:
     """读取最近 MAX_MEMORIES 条 reflection 类别的记忆"""
     try:
         import lancedb
@@ -63,9 +71,9 @@ def get_reflection_memories():
         return []
 
 
-def get_memory_texts():
+def get_memory_texts() -> List[MemoryEntry]:
     """读取 memory jsonl 文件作为备用"""
-    memories = []
+    memories: List[MemoryEntry] = []
     memory_file = Path.home() / ".openclaw" / "workspace" / "memory" / "reflections.jsonl"
     if memory_file.exists():
         with open(memory_file) as f:
@@ -84,7 +92,7 @@ def get_memory_texts():
 
 # ─── .learnings/LEARNINGS.md 读取 ─────────────────────────────────────────
 
-def get_learnings_entries():
+def get_learnings_entries() -> List[LearningEntry]:
     """
     读取 ~/.openclaw/workspace/.learnings/LEARNINGS.md
     解析每条记录的 title/summary/details，转换为候选条目
@@ -95,7 +103,7 @@ def get_learnings_entries():
     with open(LEARNINGS_FILE, encoding="utf-8") as f:
         content = f.read()
 
-    entries = []
+    entries: List[LearningEntry] = []
     # 按 ## 标题 分隔条目
     blocks = re.split(r"\n## ", "\n" + content)
     for block in blocks[1:]:  # 跳过空开头
@@ -126,7 +134,7 @@ def get_learnings_entries():
 
 # ─── 规则提炼 ───────────────────────────────────────────────────────────────
 
-REFLECTION_PATTERNS = {
+REFLECTION_PATTERNS: Dict[str, List[str]] = {
     "用户纠正": [
         r"不是让你记吗", r"你记哪去了", r"不对", r"重来", r"不是这个意思",
         r"错了", r"我想要的是", r"其实", r"不是这样", r"等等", r"停",
@@ -147,7 +155,7 @@ REFLECTION_PATTERNS = {
 def classify_reflection(text: str, metadata_json: str = "") -> str:
     """根据文本内容和metadata分类触发原因"""
     text_lower = text.lower()
-    scores = {}
+    scores: Dict[str, int] = {}
     for category, patterns in REFLECTION_PATTERNS.items():
         score = sum(1 for p in patterns if re.search(p, text_lower))
         scores[category] = score
@@ -166,12 +174,12 @@ def classify_reflection(text: str, metadata_json: str = "") -> str:
     return max(scores, key=scores.get)
 
 
-def extract_rule_candidates(all_memories: list) -> dict:
+def extract_rule_candidates(all_memories: List[MemoryEntry]) -> ByCategory:
     """
     从所有记忆（含 LanceDB + learnings 文件）中提取规则候选
     by_category 按 (触发类型, 来源) 组织
     """
-    by_category = {
+    by_category: ByCategory = {
         "用户纠正": [], "工具失败": [], "上报触发": [], "其他": []
     }
 
@@ -187,17 +195,16 @@ def extract_rule_candidates(all_memories: list) -> dict:
     return by_category
 
 
-def generate_rules(by_category: dict) -> list:
+def generate_rules(by_category: ByCategory) -> List[RuleTuple]:
     """生成 NEVER/MUST 格式规则，标注来源"""
-    rules = []
+    rules: List[RuleTuple] = []
 
     # 用户纠正 → 行为规则
     corrections = by_category.get("用户纠正", [])
     if corrections:
-        # 处理兼容性：支持 2-元组 (text, metadata) 和 3-元组 (text, metadata, source)
         lance_count = sum(1 for c in corrections if len(c) > 2 and c[2] == "LanceDB")
         learnings_count = sum(1 for c in corrections if len(c) > 2 and c[2] == "learnings_file")
-        unique_patterns = _deduplicate_patterns([c[0] for c in corrections])
+        _deduplicate_patterns([c[0] for c in corrections])
         source_note = _format_source_note(lance_count, learnings_count)
         rules.append((
             "MUST",
@@ -207,7 +214,6 @@ def generate_rules(by_category: dict) -> list:
     # 工具失败 → 协议规则
     failures = by_category.get("工具失败", [])
     if failures:
-        # 处理兼容性：支持 2-元组 (text, metadata) 和 3-元组 (text, metadata, source)
         lance_count = sum(1 for f in failures if len(f) > 2 and f[2] == "LanceDB")
         learnings_count = sum(1 for f in failures if len(f) > 2 and f[2] == "learnings_file")
         source_note = _format_source_note(lance_count, learnings_count)
@@ -219,7 +225,6 @@ def generate_rules(by_category: dict) -> list:
     # 上报触发 → 确认规则
     escalations = by_category.get("上报触发", [])
     if escalations:
-        # 处理兼容性：支持 2-元组 (text, metadata) 和 3-元组 (text, metadata, source)
         lance_count = sum(1 for e in escalations if len(e) > 2 and e[2] == "LanceDB")
         learnings_count = sum(1 for e in escalations if len(e) > 2 and e[2] == "learnings_file")
         source_note = _format_source_note(lance_count, learnings_count)
@@ -232,7 +237,7 @@ def generate_rules(by_category: dict) -> list:
 
 
 def _format_source_note(lance_count: int, learnings_count: int) -> str:
-    parts = []
+    parts: List[str] = []
     if lance_count > 0:
         parts.append(f"LanceDB {lance_count}条")
     if learnings_count > 0:
@@ -240,10 +245,10 @@ def _format_source_note(lance_count: int, learnings_count: int) -> str:
     return "来源：" + "，".join(parts)
 
 
-def _deduplicate_patterns(texts: list) -> list:
+def _deduplicate_patterns(texts: List[str]) -> List[str]:
     """去除重复模式，保留核心关键词"""
-    seen = set()
-    unique = []
+    seen: set = set()
+    unique: List[str] = []
     for t in texts:
         words = t.split("。")[0][:50]
         key = words.lower()
@@ -255,7 +260,7 @@ def _deduplicate_patterns(texts: list) -> list:
 
 # ─── 暂存机制 ───────────────────────────────────────────────────────────────
 
-def save_pending_candidates(candidates: list[dict]):
+def save_pending_candidates(candidates: List[CandidateDict]) -> None:
     """生成候选后保存到暂存文件"""
     PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -267,7 +272,7 @@ def save_pending_candidates(candidates: list[dict]):
     logger.info(f"候选已暂存到 {PENDING_FILE}")
 
 
-def load_pending_candidates() -> list[dict]:
+def load_pending_candidates() -> List[CandidateDict]:
     """读取暂存文件，返回所有 pending 状态的候选"""
     if not PENDING_FILE.exists():
         return []
@@ -280,7 +285,7 @@ def load_pending_candidates() -> list[dict]:
         return []
 
 
-def update_pending_status(rule_id: int, new_status: str):
+def update_pending_status(rule_id: int, new_status: str) -> None:
     """更新指定候选的状态为 written / skipped"""
     if not PENDING_FILE.exists():
         return

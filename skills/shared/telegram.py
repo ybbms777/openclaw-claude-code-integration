@@ -5,13 +5,12 @@ telegram.py — Telegram 通知工具
 提供统一的 Telegram 消息发送功能，所有技能共享使用。
 """
 
-import os
-import sys
 import json
-import urllib.request
-import urllib.parse
+import os
 import urllib.error
-from typing import Optional
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, Optional
 
 from skills.shared.logger import get_logger
 

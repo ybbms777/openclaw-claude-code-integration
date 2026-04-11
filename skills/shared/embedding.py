@@ -5,14 +5,13 @@ embedding.py — 统一的 Embedding 获取工具
 提供统一的文本 embedding 获取功能，支持多种 Provider 和 fallback。
 """
 
+import hashlib
+import json
 import math
 import os
-import sys
-import json
-import hashlib
-import urllib.request
 import urllib.error
-from typing import Optional, List
+import urllib.request
+from typing import List, Literal, Optional
 
 from skills.shared.logger import get_logger
 
@@ -21,18 +20,20 @@ logger = get_logger(__name__)
 
 # ─── 配置 ──────────────────────────────────────────────────────────────────
 
-SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
-SILICONFLOW_EMBED_URL = "https://api.siliconflow.cn/v1/embeddings"
-SILICONFLOW_MODEL = "BAAI/bge-m3"
+SILICONFLOW_API_KEY: str = os.environ.get("SILICONFLOW_API_KEY", "")
+SILICONFLOW_EMBED_URL: str = "https://api.siliconflow.cn/v1/embeddings"
+SILICONFLOW_MODEL: str = "BAAI/bge-m3"
 
-MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
-MINIMAX_EMBED_URL = "https://api.minimaxi.com/v1/embeddings"
-MINIMAX_MODEL = "minimax-embedding"
+MINIMAX_API_KEY: str = os.environ.get("MINIMAX_API_KEY", "")
+MINIMAX_EMBED_URL: str = "https://api.minimaxi.com/v1/embeddings"
+MINIMAX_MODEL: str = "minimax-embedding"
+
+EmbeddingModel = Literal["auto", "siliconflow", "minimax", "hash"]
 
 # ─── Embedding 函数 ────────────────────────────────────────────────────────
 
 
-def get_embedding(text: str, model: str = "auto") -> Optional[List[float]]:
+def get_embedding(text: str, model: EmbeddingModel = "auto") -> Optional[List[float]]:
     """
     获取文本的 embedding（优先使用 SiliconFlow，备用 MiniMax，最后 hash fallback）
 

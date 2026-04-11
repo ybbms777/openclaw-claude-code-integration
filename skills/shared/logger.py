@@ -6,17 +6,18 @@ logger.py — 统一日志工具
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
 
 
 # 默认日志格式
-DEFAULT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+DEFAULT_FORMAT: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
 
 # 日志级别环境变量
-LOG_LEVEL = __import__("os").environ.get("OPENCLAW_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL: str = os.environ.get("OPENCLAW_LOG_LEVEL", "INFO").upper()
 
 
 def get_logger(
