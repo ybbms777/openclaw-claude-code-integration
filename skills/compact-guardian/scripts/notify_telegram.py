@@ -12,6 +12,11 @@ import sys
 import urllib.request
 import urllib.parse
 import urllib.error
+import json
+
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 # 配置 — 从环境变量读取（需在 ~/.openclaw/.env 中配置）
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
@@ -21,7 +26,7 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 def send_telegram_message(text: str) -> bool:
     if not BOT_TOKEN or not CHAT_ID:
-        print("Error: TG_BOT_TOKEN and TG_CHAT_ID environment variables not set", file=sys.stderr)
+        logger.error("TG_BOT_TOKEN and TG_CHAT_ID environment variables not set")
         return False
     data = urllib.parse.urlencode(
         {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
@@ -36,20 +41,19 @@ def send_telegram_message(text: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = resp.read().decode("utf-8")
-            import json
             parsed = json.loads(result)
             return parsed.get("ok", False)
     except urllib.error.HTTPError as e:
-        print(f"HTTP error {e.code}: {e.read().decode()}", file=sys.stderr)
+        logger.error(f"HTTP error {e.code}: {e.read().decode()}")
         return False
     except Exception as e:
-        print(f"Failed to send Telegram message: {e}", file=sys.stderr)
+        logger.error(f"Failed to send Telegram message: {e}")
         return False
 
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: notify_telegram.py <message>", file=sys.stderr)
+        logger.error("Usage: notify_telegram.py <message>")
         sys.exit(1)
 
     message = " ".join(sys.argv[1:])

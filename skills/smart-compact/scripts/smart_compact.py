@@ -24,6 +24,10 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
+
 # ─── Telegram ───────────────────────────────────────────────────────────────
 
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
@@ -46,7 +50,7 @@ def send_telegram(text: str) -> bool:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode()).get("ok", False)
     except Exception as e:
-        print(f"[TG ERROR] {e}", file=sys.stderr)
+        logger.error(f"Telegram error: {e}")
         return False
 
 
@@ -112,7 +116,7 @@ def get_current_session_messages(limit: int = 50) -> list[dict]:
             except (json.JSONDecodeError, ValueError):
                 pass
     except Exception as e:
-        print(f"[SESSION WARN] {e}", file=sys.stderr)
+        logger.warning(f"获取 session 失败: {e}")
 
     # fallback：读取 transcript 文件
     transcripts = sorted(
@@ -123,7 +127,7 @@ def get_current_session_messages(limit: int = 50) -> list[dict]:
     messages = []
     if transcripts:
         latest = transcripts[0]
-        print(f"[TRANSCRIPT] reading {latest.name} ({latest.stat().st_size} bytes)", file=sys.stderr)
+        logger.info(f"读取 transcript: {latest.name} ({latest.stat().st_size} bytes)")
         with open(latest) as f:
             for line in f:
                 line = line.strip()
@@ -139,7 +143,7 @@ def get_current_session_messages(limit: int = 50) -> list[dict]:
                             messages.append(inner)
                 except (json.JSONDecodeError, ValueError):
                     pass
-    print(f"[TRANSCRIPT] loaded {len(messages)} messages", file=sys.stderr)
+    logger.info(f"已加载 {len(messages)} 条消息")
     return messages[-limit:] if messages else []
 
 
@@ -263,7 +267,7 @@ COMPACT_THRESHOLD = 0.80
 
 def call_minimax(prompt: str, max_tokens: int = 512) -> str:
     if not MINIMAX_API_KEY:
-        print("[ERROR] MINIMAX_API_KEY environment variable not set", file=sys.stderr)
+        logger.error("MINIMAX_API_KEY environment variable not set")
         return None
     import urllib.request, urllib.error
     payload = json.dumps({
@@ -288,7 +292,7 @@ def call_minimax(prompt: str, max_tokens: int = 512) -> str:
             raw = re2.sub(r'<thinking>[\s\S]*?</thinking>', '', raw)
             return raw.strip()
     except Exception as e:
-        print(f"[MiniMax API ERROR] {e}", file=sys.stderr)
+        logger.error(f"MiniMax API error: {e}")
         return None
 
 
@@ -381,8 +385,7 @@ def compact_session(force: bool = False) -> dict:
     total_tokens = estimate_tokens(total_text)
     usage_ratio = total_tokens / CONTEXT_WINDOW
 
-    print(f"[compact] 文件: {session_file.name}")
-    print(f"[compact] 消息: {len(all_messages)} 条, token: ~{total_tokens}, 使用率: {usage_ratio:.1%}")
+    logger.info(f"文件: {session_file.name}, 消息: {len(all_messages)} 条, token: ~{total_tokens}, 使用率: {usage_ratio:.1%}")
 
     if not force and usage_ratio < COMPACT_THRESHOLD:
         return {
@@ -395,9 +398,9 @@ def compact_session(force: bool = False) -> dict:
     analysis = analyze_context(all_messages[-50:])
     strategy = analysis["strategy"]
 
-    print(f"[compact] 生成摘要 (策略 {strategy}: {analysis['strategy_name']})...")
+    logger.info(f"生成摘要 (策略 {strategy}: {analysis['strategy_name']})...")
     summary = generate_summary(all_messages, strategy)
-    print(f"[compact] 摘要: {summary[:100]}...")
+    logger.debug(f"摘要: {summary[:100]}...")
 
     keep_count = max(5, int(len(all_messages) * 0.3))
     recent_messages = all_messages[-keep_count:]
@@ -416,7 +419,7 @@ def compact_session(force: bool = False) -> dict:
     try:
         tmp_file.rename(session_file)
     except OSError as e:
-        print(f"[compact] 文件重命名失败: {e}", file=sys.stderr)
+        logger.error(f"文件重命名失败: {e}")
         # Fallback: copy and delete
         import shutil
         shutil.copy2(tmp_file, session_file)
@@ -450,30 +453,27 @@ def compact_session(force: bool = False) -> dict:
 
 def run_dry_run() -> None:
     ts = datetime.now(timezone(timedelta(hours=8)))
-    print(f"[{ts.strftime('%Y-%m-%d %H:%M:%S')}] Smart Compact Dry-Run 开始")
+    logger.info(f"Smart Compact Dry-Run 开始")
     messages = get_current_session_messages(limit=80)
-    print(f"  获取到 {len(messages)} 条消息")
+    logger.info(f"获取到 {len(messages)} 条消息")
     if not messages:
         send_telegram("⚠️ Smart Compact：无法获取 session 历史，请检查权限")
         return
     analysis = analyze_context(messages)
-    print(f"  策略: {analysis['strategy_name']} ({analysis['strategy']})")
-    print(f"  总 token: {analysis['total_tokens_kb']}k")
-    print(f"  保留率: {analysis['retention_rate']}%")
+    logger.info(f"策略: {analysis['strategy_name']} ({analysis['strategy']}), 总 token: {analysis['total_tokens_kb']}k, 保留率: {analysis['retention_rate']}%")
     report = format_dry_run(analysis)
     send_telegram(report)
-    print(f"  报告已发送")
+    logger.info("Dry-run 报告已发送")
 
 
 def run_compress(force: bool = False) -> None:
-    ts = datetime.now(timezone(timedelta(hours=8)))
-    print(f"[{ts.strftime('%Y-%m-%d %H:%M:%S')}] Smart Compact 执行开始")
+    logger.info("Smart Compact 执行开始")
     result = compact_session(force=force)
     if not result["success"]:
         send_telegram(f"⚠️ Smart Compact 失败：{result['reason']}")
         return
     if "无需压缩" in result.get("reason", ""):
-        print(f"[compact] 跳过: {result['reason']}")
+        logger.info(f"跳过: {result['reason']}")
         return
     summary = result['summary']
     if len(summary) > 500:
@@ -488,7 +488,7 @@ def run_compress(force: bool = False) -> None:
 【摘要】
 {summary}"""
     send_telegram(report)
-    print(f"[compact] 压缩完成: {result['pre_usage']} → {result['post_usage']}")
+    logger.info(f"压缩完成: {result['pre_usage']} → {result['post_usage']}")
 
 
 if __name__ == "__main__":
@@ -504,5 +504,5 @@ if __name__ == "__main__":
     elif args.dry_run or args.analyze_only:
         run_dry_run()
     else:
-        print("用法：smart_compact.py --dry-run | --compress [--force]")
+        logger.error("用法：smart_compact.py --dry-run | --compress [--force]")
         sys.exit(1)

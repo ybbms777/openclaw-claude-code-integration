@@ -22,6 +22,10 @@ import sys
 import time
 from pathlib import Path
 
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
+
 GUARDIAN_DIR = Path.home() / ".openclaw" / "workspace" / "skills" / "compact-guardian"
 STATE_FILE = GUARDIAN_DIR / "circuit_state.json"
 MAX_FAILURES = 3
@@ -31,8 +35,8 @@ def load_state() -> dict:
     if STATE_FILE.exists():
         try:
             return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"读取状态文件失败: {e}")
     return {"sessions": {}, "tripped": {}}
 
 

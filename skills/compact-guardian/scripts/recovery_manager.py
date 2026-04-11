@@ -24,6 +24,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
+
 # ─── 配置 ──────────────────────────────────────────────────────────────────
 
 WORKSPACE = Path.home() / ".openclaw" / "workspace"
@@ -63,8 +67,11 @@ def send_telegram(text: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode()).get("ok", False)
+    except urllib.error.HTTPError as e:
+        logger.error(f"Telegram HTTP error {e.code}: {e.read().decode()}")
+        return False
     except Exception as e:
-        print(f"[TG ERROR] {e}", file=sys.stderr)
+        logger.error(f"Telegram error: {e}")
         return False
 
 
@@ -92,8 +99,8 @@ class RecoveryManager:
         """确保必要的目录存在"""
         try:
             self.recovery_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            print(f"[RECOVERY] 无法创建恢复目录 {self.recovery_dir}: {e}", file=sys.stderr)
+        except OSError as e:
+            logger.error(f"无法创建恢复目录 {self.recovery_dir}: {e}")
 
     def _load_state(self) -> dict:
         """加载失败状态文件"""
@@ -109,8 +116,8 @@ class RecoveryManager:
         try:
             with open(self.failures_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"[RECOVERY] 读取状态文件失败: {e}", file=sys.stderr)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"读取状态文件失败: {e}")
             return {
                 "failures": [],
                 "circuit_tripped": False,
@@ -124,8 +131,8 @@ class RecoveryManager:
         try:
             with open(self.failures_file, "w", encoding="utf-8") as f:
                 json.dump(self.state, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"[RECOVERY] 保存状态文件失败: {e}", file=sys.stderr)
+        except OSError as e:
+            logger.error(f"保存状态文件失败: {e}")
 
     def _is_circuit_tripped(self) -> bool:
         """检查熔断器是否已触发"""
@@ -137,7 +144,7 @@ class RecoveryManager:
 
         # 检查熔断是否已过期
         if now - circuit_at > CIRCUIT_TRIP_DURATION:
-            print(f"[RECOVERY] 熔断已恢复（持续 {int(now - circuit_at)} 秒）")
+            logger.info(f"熔断已恢复（持续 {int(now - circuit_at)} 秒）")
             self.state["circuit_tripped"] = False
             self._save_state()
             return False
@@ -171,7 +178,7 @@ class RecoveryManager:
         self.state["failures"].append(failure_record)
         self.state["last_failure_at"] = now
 
-        print(f"[RECOVERY] 记录失败 #{failure_record['count']}: {error_msg[:100]}")
+        logger.warning(f"记录失败 #{failure_record['count']}: {error_msg[:100]}")
 
         # 检查是否达到熔断阈值
         if failure_record["count"] >= MAX_FAILURES_BEFORE_CIRCUIT:
@@ -196,7 +203,7 @@ class RecoveryManager:
                 f"下次重试: {next_retry_ts}\n"
                 f"策略: 指数退避"
             )
-            print(f"[RECOVERY] 下次重试在 {delay_s}s 后（{next_retry_ts}）")
+            logger.info(f"下次重试在 {delay_s}s 后（{next_retry_ts}）")
         else:
             msg = (
                 f"⚠️ <b>Memory Compaction 即将熔断</b>\n"
@@ -223,7 +230,7 @@ class RecoveryManager:
         self.state["circuit_trip_at"] = now
         self._save_state()
 
-        print(f"[RECOVERY] 🚫 熔断触发！将停止重试直到 {recovery_until_ts}", file=sys.stderr)
+        logger.error(f"熔断触发！将停止重试直到 {recovery_until_ts}")
 
         msg = (
             f"🚫 <b>Memory Compaction 已熔断</b>\n"
@@ -283,14 +290,14 @@ class RecoveryManager:
                 )
                 if not all_backups:
                     msg = f"❌ 无可用备份，恢复失败 ({now_ts})"
-                    print(f"[RECOVERY] {msg}")
+                    logger.error(msg)
                     send_telegram_safe(msg)
                     return False
                 backup_path = all_backups[0]
 
             if not backup_path.exists():
                 msg = f"❌ 备份不存在: {backup_path} ({now_ts})"
-                print(f"[RECOVERY] {msg}")
+                logger.error(msg)
                 send_telegram_safe(msg)
                 return False
 
@@ -302,7 +309,7 @@ class RecoveryManager:
                 else:
                     shutil.copy2(str(LANCE_DB_PATH), str(corrupted_path))
                     LANCE_DB_PATH.unlink()
-                print(f"[RECOVERY] 已将损坏数据库移至 {corrupted_path}")
+                logger.info(f"已将损坏数据库移至 {corrupted_path}")
 
             # 确保目标目录存在
             LANCE_DB_PATH.mkdir(parents=True, exist_ok=True)
@@ -327,7 +334,7 @@ class RecoveryManager:
                 f"损坏数据: {corrupted_path}\n\n"
                 f"失败计数已重置，将重新启动 memory_compaction"
             )
-            print(f"[RECOVERY] ✅ 恢复成功，使用备份 {backup_path.name}")
+            logger.info(f"恢复成功，使用备份 {backup_path.name}")
             send_telegram_safe(msg)
 
             # 重置失败计数
@@ -339,7 +346,7 @@ class RecoveryManager:
 
         except Exception as e:
             msg = f"❌ 恢复失败: {str(e)[:80]} ({now_ts})"
-            print(f"[RECOVERY] {msg}", file=sys.stderr)
+            logger.error(msg)
             send_telegram_safe(msg)
             return False
 
@@ -369,7 +376,7 @@ class RecoveryManager:
             "last_failure_at": 0,
         }
         self._save_state()
-        print("[RECOVERY] 已重置所有失败记录和熔断器")
+        logger.info("已重置所有失败记录和熔断器")
 
     def get_status(self) -> Dict[str, Any]:
         """获取当前状态"""

@@ -17,6 +17,10 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
+
 WORKSPACE = Path.home() / ".openclaw" / "workspace"
 MEMORY_STORE_SCRIPT = WORKSPACE / "skills" / "memory-lancedb-pro" / "scripts" / "memory_store.py"
 LANCE_DB_PATH = Path.home() / ".openclaw" / "memory" / "lancedb-pro"
@@ -260,7 +264,7 @@ def store_learnings_md(findings: list[dict]) -> int:
     with open(LEARNINGS_FILE, "a", encoding="utf-8") as fw:
         fw.write("\n".join(entries) + "\n")
 
-    print(f"[self_eval] 写入 {len(entries)} 条到 LEARNINGS.md")
+    logger.info(f"写入 {len(entries)} 条到 LEARNINGS.md")
     return len(entries)
 
 
@@ -271,7 +275,7 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
     try:
         import lancedb
     except ImportError:
-        print("[ERROR] lancedb not installed", file=sys.stderr)
+        logger.error("lancedb not installed")
         return False
 
     now_ms = int(datetime.now(timezone(timedelta(hours=8))).timestamp() * 1000)
@@ -314,7 +318,7 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
     def _get_embedding_minimax(text: str) -> list[float]:
         MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
         if not MINIMAX_API_KEY:
-            print("[self_eval] no embedding API key available, using hash fallback", file=sys.stderr)
+            logger.warning("no embedding API key available, using hash fallback")
             h = hashlib.sha256(text.encode("utf-8")).digest()
             vec = [0.0] * 1024
             for i in range(min(len(h), 1024)):
@@ -331,7 +335,7 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
             with urllib.request.urlopen(req2, timeout=15) as resp2:
                 return json.loads(resp2.read())["data"][0]["embedding"]
         except Exception as e2:
-            print(f"[self_eval] embedding failed: {e2}, using hash fallback", file=sys.stderr)
+            logger.warning(f"embedding failed: {e2}, using hash fallback")
             h = hashlib.sha256(text.encode("utf-8")).digest()
             vec = [0.0] * 1024
             for i in range(min(len(h), 1024)):
@@ -353,7 +357,7 @@ def store_reflection(category: str, content: str, importance: float = 0.9) -> bo
         "uri": "",
         "access_count": 0,
     }])
-    print(f"[self_eval] stored reflection: {record_id}")
+    logger.debug(f"stored reflection: {record_id}")
     return True
 
 
@@ -398,13 +402,13 @@ def run_self_eval(dry_run: bool = False) -> dict:
     执行自我评估。dry_run=True 时只检测不写入，用于测试。
     """
     ts = datetime.now(timezone(timedelta(hours=8)))
-    print(f"[{ts.strftime('%Y-%m-%d %H:%M:%S')}] self_eval {'(dry-run)' if dry_run else ''} 开始")
+    logger.info(f"self_eval {'(dry-run)' if dry_run else ''} 开始")
 
     messages = load_session_messages(limit=200)
-    print(f"  读取 {len(messages)} 条消息")
+    logger.debug(f"读取 {len(messages)} 条消息")
 
     if not messages:
-        print("  无消息，静默退出")
+        logger.debug("无消息，静默退出")
         return {"status": "silent", "corrections": 0, "failures": 0, "pauses": 0}
 
     corrections = detect_corrections(messages)
@@ -415,7 +419,7 @@ def run_self_eval(dry_run: bool = False) -> dict:
     explicit_corr = [c for c in corrections if c.get("pattern_type") == "explicit"]
     implicit_corr = [c for c in corrections if c.get("pattern_type") == "implicit"]
 
-    print(f"  显式纠正: {len(explicit_corr)} | 隐式纠正: {len(implicit_corr)} | 工具失败: {len(failures)} | BDX失败: {len(bdx_failures)} | 上报: {len(pauses)}")
+    logger.info(f"显式纠正: {len(explicit_corr)} | 隐式纠正: {len(implicit_corr)} | 工具失败: {len(failures)} | BDX失败: {len(bdx_failures)} | 上报: {len(pauses)}")
 
     if dry_run:
         # 只打印检测结果，不写入
@@ -436,7 +440,7 @@ def run_self_eval(dry_run: bool = False) -> dict:
 
     total = len(corrections) + len(failures) + len(pauses) + len(bdx_failures)
     if total == 0:
-        print("  无异常，静默退出")
+        logger.debug("无异常，静默退出")
         return {"status": "silent", "corrections": 0, "failures": 0, "bdx_failures": 0, "pauses": 0}
 
     stored = 0
@@ -464,7 +468,7 @@ def run_self_eval(dry_run: bool = False) -> dict:
         if text and store_reflection("reflection", text, importance=0.92):
             stored += 1
 
-    print(f"  已写入 {stored} 条 reflection 记忆")
+    logger.info(f"已写入 {stored} 条 reflection 记忆")
     return {
         "status": "stored",
         "corrections": len(corrections),

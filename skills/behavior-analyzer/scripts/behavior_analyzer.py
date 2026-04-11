@@ -13,6 +13,10 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from collections import Counter
 
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class BehaviorMetrics:
@@ -150,7 +154,7 @@ class SessionBehaviorAnalyzer:
             return max(0, score), anomalies
 
         except Exception as e:
-            print(f"[warn] 检测错误模式失败: {e}", file=sys.stderr)
+            logger.warning(f"检测错误模式失败: {e}")
             return 100.0, []
 
     def _detect_role_drift(self, session_id: str) -> Tuple[float, List[str]]:
@@ -182,7 +186,7 @@ class SessionBehaviorAnalyzer:
             return max(0, score), anomalies
 
         except Exception as e:
-            print(f"[warn] 检测角色漂移失败: {e}", file=sys.stderr)
+            logger.warning(f"检测角色漂移失败: {e}")
             return 100.0, []
 
     def _detect_cache_degradation(self, session_id: str) -> Tuple[float, List[str]]:
@@ -211,7 +215,7 @@ class SessionBehaviorAnalyzer:
             return max(0, score), anomalies
 
         except Exception as e:
-            print(f"[warn] 检测缓存降级失败: {e}", file=sys.stderr)
+            logger.warning(f"检测缓存降级失败: {e}")
             return 100.0, []
 
     def _detect_permission_escalation(self, session_id: str) -> Tuple[float, List[str]]:
@@ -249,7 +253,7 @@ class SessionBehaviorAnalyzer:
             return max(0, score), anomalies
 
         except Exception as e:
-            print(f"[warn] 检测权限级别变化失败: {e}", file=sys.stderr)
+            logger.warning(f"检测权限级别变化失败: {e}")
             return 100.0, []
 
     def _calculate_health_score(self, error_score: float, role_score: float,
@@ -346,7 +350,7 @@ class SessionBehaviorAnalyzer:
                 json.dump(history, f, indent=2)
 
         except Exception as e:
-            print(f"[error] 保存行为指标失败: {e}", file=sys.stderr)
+            logger.error(f"保存行为指标失败: {e}")
 
 
 def main():
@@ -395,7 +399,7 @@ def main():
             return 0 if metrics.warning_level != "critical" else 1
 
     except Exception as e:
-        print(f"[error] 分析失败: {e}", file=sys.stderr)
+        logger.error(f"分析失败: {e}")
         return 1
 
 

@@ -14,11 +14,11 @@ memory_compaction.py — LanceDB 记忆压缩脚本（增强版）
   python3 memory_compaction.py --cron        # cron 调用，错误也发 Telegram
 """
 
-import os, argparse
+import os
+import argparse
 import glob
 import json
 import math
-import os
 import shutil
 import sys
 import time
@@ -27,6 +27,10 @@ import urllib.parse
 import urllib.error
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Week 2 Integration: Recovery Manager
 try:
@@ -68,7 +72,7 @@ def send_telegram(text: str) -> bool:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode()).get("ok", False)
     except Exception as e:
-        print("[TG ERROR]", e, file=sys.stderr)
+        logger.error(f"Telegram error: {e}")
         return False
 
 
@@ -131,7 +135,7 @@ def create_backup() -> Path:
             shutil.rmtree(old)
             print(f"[BACKUP] 已删除旧备份: {old}")
     except Exception as e:
-        print(f"[BACKUP WARN] 清理旧备份失败: {e}", file=sys.stderr)
+        logger.warning(f"清理旧备份失败: {e}")
 
     return backup_path
 
@@ -535,15 +539,15 @@ def main() -> None:
                     }
                 )
             except Exception as recovery_err:
-                print(f"[RECOVERY] 记录失败到恢复管理器失败: {recovery_err}", file=sys.stderr)
+                logger.error(f"记录失败到恢复管理器失败: {recovery_err}")
 
-        err_msg = f"❌ Memory Compaction 熔断：{e}，停止执行"
-        print(err_msg, file=sys.stderr)
+        err_msg = f"Memory Compaction 熔断：{e}，停止执行"
+        logger.error(err_msg)
         send_telegram_safe(err_msg)
         sys.exit(1)
     except Exception as e:
-        err_msg = f"❌ Memory Compaction 异常：{e}"
-        print(err_msg, file=sys.stderr)
+        err_msg = f"Memory Compaction 异常：{e}"
+        logger.error(err_msg)
         if args.cron:
             send_telegram_safe(err_msg)
         raise

@@ -12,9 +12,14 @@ yolo_classifier.py — 工具调用安全分类器
 """
 
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
+
+from skills.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Week 4 Integration: Permission Scorer
 try:
@@ -24,7 +29,6 @@ except ImportError:
     PERMISSION_SCORER_AVAILABLE = False
 
 # ─── 配置 ─────────────────────────────────────────────────────────────────
-import os
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_URL = "https://api.minimaxi.com/v1/chat/completions"
 
@@ -112,7 +116,7 @@ def quick_rule_check(tool_name: str, params: dict) -> dict | None:
                     "source": "scorer"
                 }
             except Exception as scorer_err:
-                print(f"[SCORING] permission_scorer 失败: {scorer_err}", file=sys.stderr)
+                logger.error(f"permission_scorer 失败: {scorer_err}")
                 # Fallback to rule-based approach
 
         # 完全安全的命令
