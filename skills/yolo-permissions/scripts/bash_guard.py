@@ -1,4 +1,3 @@
-#!/usr/local/bin/python3.12
 #!/usr/bin/env python3
 """
 bash_guard.py — Bash 命令安全验证层

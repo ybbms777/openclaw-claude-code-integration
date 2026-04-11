@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3
+#!/usr/bin/env python3
 """
 evolve.py — 从 reflection 记忆和 .learnings/LEARNINGS.md 提炼候选规则
 

@@ -26,7 +26,14 @@ try:
     from skills.yolo_permissions.scripts.permission_scorer import PermissionScorer
     PERMISSION_SCORER_AVAILABLE = True
 except ImportError:
-    PERMISSION_SCORER_AVAILABLE = False
+    # Fallback for hyphenated directory names
+    import importlib
+    try:
+        permission_scorer = importlib.import_module("skills.yolo-permissions.scripts.permission_scorer")
+        PermissionScorer = permission_scorer.PermissionScorer
+        PERMISSION_SCORER_AVAILABLE = True
+    except (ImportError, AttributeError):
+        PERMISSION_SCORER_AVAILABLE = False
 
 # ─── 配置 ─────────────────────────────────────────────────────────────────
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")

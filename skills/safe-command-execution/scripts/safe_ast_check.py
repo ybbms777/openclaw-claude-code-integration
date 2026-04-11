@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.12
+#!/usr/bin/env python3
 """
 safe_ast_check.py — BashAST 与 safe-exec 集成层
 

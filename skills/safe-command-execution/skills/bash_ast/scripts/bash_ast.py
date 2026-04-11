@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.12
+#!/usr/bin/env python3
 """
 bash_ast.py — Bash AST 解析安全层
 
