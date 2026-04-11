@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-hook_integration.py — OpenClaw 2.0 钩子系统集成
+hook_integration.py — OpenClaw 2.0 钩子系统集成 (v2026.4.x 兼容)
 
-为 OpenClaw 2.0 Agent 提供钩子回调实现，支持：
-- agent:tool_dispatch  - 工具调用前决策
-- agent:tool_result    - 工具执行结果反馈
-- session:start        - 会话开始
-- session:end          - 会话结束
+官方 Hook 接口（v2026.4.5+）：
+- before_tool_call   → { block: true } 阻止, { requireApproval: true } 暂停
+- before_install     → { block: true } 阻止
+- reply_dispatch     → { handled: true } 终止
+- message_sending    → { cancel: true } 终止
 
 用法：
   python3 hook_integration.py --setup    # 生成钩子配置文件
@@ -30,71 +30,66 @@ from skills.shared.logger import get_logger
 logger = get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 钩子类型枚举
+# OpenClaw 2.0 官方钩子类型
 # ═══════════════════════════════════════════════════════════════════════════
 
-class HookType(Enum):
-    TOOL_DISPATCH = "agent:tool_dispatch"      # 工具调用前
-    TOOL_RESULT = "agent:tool_result"         # 工具执行后
-    SESSION_START = "session:start"            # 会话开始
-    SESSION_END = "session:end"                # 会话结束
-    RULE_EVALUATED = "rule:evaluated"         # 规则评估后
-    MEMORY_STORED = "memory:stored"            # 记忆存储后
+class OpenClawHook(Enum):
+    """OpenClaw 2.0 官方钩子 (v2026.4.x)"""
+    BEFORE_TOOL_CALL = "before_tool_call"       # 工具调用前
+    BEFORE_INSTALL = "before_install"           # 安装前
+    REPLY_DISPATCH = "reply_dispatch"          # 回复分发
+    MESSAGE_SENDING = "message_sending"         # 消息发送
 
 
 @dataclass
-class HookContext:
-    """钩子上下文"""
-    session_id: str
-    agent_id: str
-    timestamp: str
+class HookResponse:
+    """OpenClaw 钩子响应格式"""
+    block: bool = False                    # 阻止操作
+    requireApproval: bool = False           # 请求用户确认
+    handled: bool = False                  # 已处理（终止传播）
+    cancel: bool = False                   # 取消操作
+    modified: bool = False                # 是否修改了上下文
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class ToolDispatchContext(HookContext):
-    """工具调用上下文"""
-    tool_name: str = ""
-    tool_args: Dict[str, Any] = field(default_factory=dict)
-    fusion_score: float = 0.0
-    rule_score: float = 0.0
-    permission_score: float = 0.0
-    final_decision: str = ""  # auto_allow, request_confirm, block
+class ToolCallContext:
+    """before_tool_call 上下文"""
+    tool: str                              # 工具名
+    args: Dict[str, Any]                   # 工具参数
+    session_id: str = ""
+    agent_id: str = ""
+    timestamp: str = ""
 
 
 @dataclass
-class ToolResultContext(HookContext):
-    """工具执行结果上下文"""
-    tool_name: str = ""
-    tool_args: Dict[str, Any] = field(default_factory=dict)
-    success: bool = False
-    error: str = ""
-    duration_ms: float = 0.0
-    user_satisfaction: float = 0.0  # 1-5
+class InstallContext:
+    """before_install 上下文"""
+    package: str                            # 包名
+    source: str = ""                       # 来源
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 钩子处理器接口
+# 知识联邦钩子处理器
 # ═══════════════════════════════════════════════════════════════════════════
 
-class HookHandler:
-    """钩子处理器基类"""
+class KnowledgeFederationHookHandler:
+    """知识联邦钩子处理器基类"""
 
     def __init__(self, priority: int = 100):
         self.priority = priority
         self.enabled = True
 
-    async def pre_hook(self, context: HookContext) -> Optional[Dict]:
-        """前置钩子（返回修改后的上下文或 None）"""
-        return None
-
-    async def post_hook(self, context: HookContext, result: Any = None) -> None:
-        """后置钩子"""
-        pass
+    async def handle(self, context: Any) -> HookResponse:
+        """处理钩子，返回 OpenClaw 格式响应"""
+        return HookResponse()
 
 
-class ToolDispatchHookHandler(HookHandler):
-    """工具调用前钩子处理器"""
+class BeforeToolCallHandler(KnowledgeFederationHookHandler):
+    """before_tool_call 钩子处理器
+
+    官方接口：返回 { block: true } 或 { requireApproval: true }
+    """
 
     def __init__(self, knowledge_fed=None, fusion_engine=None, rule_optimizer=None):
         super().__init__(priority=100)
@@ -102,101 +97,166 @@ class ToolDispatchHookHandler(HookHandler):
         self.fusion_engine = fusion_engine
         self.rule_optimizer = rule_optimizer
 
-    async def pre_hook(self, context: ToolDispatchContext) -> Optional[Dict]:
+    async def handle(self, context: ToolCallContext) -> HookResponse:
         """工具调用决策"""
-        decisions = []
+        response = HookResponse()
 
-        # 1. 获取适用的社群规则
+        # 1. 检查危险命令模式
+        dangerous_patterns = [
+            (r"rm\s+-rf", "危险删除操作"),
+            (r"chmod\s+777", "高危权限设置"),
+            (r"git\s+push\s+--force", "强制推送"),
+            (r">\s*/dev/sd", "直接写入磁盘设备"),
+        ]
+
+        for pattern, reason in dangerous_patterns:
+            import re
+            if context.tool == "bash" and "args" in context.args:
+                command = context.args.get("command", "")
+                if re.search(pattern, command, re.IGNORECASE):
+                    logger.warning(f"检测到危险命令: {reason}")
+                    response.requireApproval = True
+                    response.metadata["reason"] = reason
+                    response.metadata["command"] = command[:100]
+                    return response
+
+        # 2. 获取适用的社群规则
         if self.knowledge_fed:
             try:
                 community_rules = self.knowledge_fed.subscribe_community_rules(
                     filters={"min_score": 75}
                 )
                 if community_rules:
-                    decisions.append({
-                        "source": "community_rules",
-                        "count": len(community_rules),
-                        "top_score": community_rules[0].leaderboard_score if community_rules else 0,
-                    })
+                    response.metadata["community_rules_count"] = len(community_rules)
+                    response.metadata["top_rule_score"] = community_rules[0].leaderboard_score if community_rules else 0
             except Exception as e:
                 logger.warning(f"获取社群规则失败: {e}")
 
-        # 2. 评估本地规则
-        if self.rule_optimizer:
+        # 3. 融合引擎评估
+        if self.fusion_engine:
             try:
-                # 规则效能评估
-                pass
+                if context.tool == "bash" and "args" in context.args:
+                    command = context.args.get("command", "")
+                    fusion_result = self.fusion_engine.fuse_decision_context(
+                        context.tool,
+                        context.args
+                    )
+                    response.metadata["fusion_score"] = fusion_result.score if hasattr(fusion_result, 'score') else 0
+                    response.metadata["fusion_decision"] = fusion_result.decision if hasattr(fusion_result, 'decision') else "allow"
+
+                    # 根据融合决策设置响应
+                    if fusion_result.decision == "block":
+                        response.block = True
+                        return response
+                    elif fusion_result.decision == "request_confirm":
+                        response.requireApproval = True
+                        return response
             except Exception as e:
-                logger.warning(f"评估本地规则失败: {e}")
+                logger.warning(f"融合引擎评估失败: {e}")
 
-        return {
-            "hook": "tool_dispatch",
-            "session_id": context.session_id,
-            "tool_name": context.tool_name,
-            "decisions": decisions,
-            "timestamp": datetime.now(timezone(timedelta(hours=8))).isoformat(),
-        }
+        # 默认：允许执行
+        response.block = False
+        response.requireApproval = False
+        return response
 
 
-class ToolResultHookHandler(HookHandler):
-    """工具执行结果钩子处理器"""
+class BeforeInstallHandler(KnowledgeFederationHookHandler):
+    """before_install 钩子处理器
 
-    def __init__(self, knowledge_fed=None, rule_optimizer=None):
-        super().__init__(priority=100)
-        self.knowledge_fed = knowledge_fed
-        self.rule_optimizer = rule_optimizer
+    官方接口：返回 { block: true } 阻止安装
+    """
 
-    async def post_hook(self, context: ToolResultContext, result: Any = None) -> None:
-        """处理工具执行结果"""
-        # 1. 记录规则应用结果
-        if self.rule_optimizer and context.success:
-            try:
-                self.rule_optimizer.record_rule_application(
-                    rule_id=f"tool_{context.tool_name}",
-                    fixed=True,
-                    satisfaction=context.user_satisfaction or 3.0,
-                )
-            except Exception as e:
-                logger.warning(f"记录规则应用失败: {e}")
+    def __init__(self):
+        super().__init__(priority=50)
 
-        # 2. 发布高效能规则到社群
-        if self.knowledge_fed and context.success and context.user_satisfaction >= 4.5:
-            try:
-                # 检查是否需要发布
-                pass
-            except Exception as e:
-                logger.warning(f"发布规则失败: {e}")
+    async def handle(self, context: InstallContext) -> HookResponse:
+        """安装前检查"""
+        response = HookResponse()
 
-        # 3. 记录失败模式
-        if not context.success:
-            try:
-                logger.warning(f"工具执行失败: {context.tool_name} - {context.error}")
-            except Exception:
-                pass
+        # 检查恶意包
+        malicious_packages = [
+            "system-attack",
+            "credential-stealer",
+            "cryptominer",
+        ]
+
+        for pkg in malicious_packages:
+            if pkg in context.package.lower():
+                logger.error(f"检测到恶意包: {context.package}")
+                response.block = True
+                response.metadata["reason"] = f"恶意包: {pkg}"
+                return response
+
+        # 检查未批准的包（需要用户确认）
+        unapproved_sources = ["npm-untrusted", "pip-unverified"]
+        for source in unapproved_sources:
+            if source in context.source.lower():
+                response.requireApproval = True
+                response.metadata["reason"] = f"未验证来源: {context.source}"
+                return response
+
+        return response
 
 
-class SessionEndHookHandler(HookHandler):
-    """会话结束钩子处理器"""
+class ReplyDispatchHandler(KnowledgeFederationHookHandler):
+    """reply_dispatch 钩子处理器
+
+    官方接口：返回 { handled: true } 终止传播
+    """
 
     def __init__(self, knowledge_fed=None):
-        super().__init__(priority=50)
+        super().__init__(priority=75)
         self.knowledge_fed = knowledge_fed
 
-    async def post_hook(self, context: HookContext, result: Any = None) -> None:
-        """会话结束后的处理"""
-        if not self.knowledge_fed:
-            return
+    async def handle(self, context: Any) -> HookResponse:
+        """回复分发处理"""
+        response = HookResponse()
 
+        if not self.knowledge_fed:
+            return response
+
+        # 检查是否需要拦截重复回复
         try:
-            # 统计本会话发布的规则
-            stats = self.knowledge_fed.get_statistics()
-            logger.info(
-                f"会话 {context.session_id} 结束 - "
-                f"本地规则: {stats.get('local_rules_count', 0)}, "
-                f"社群规则: {stats.get('community_rules_count', 0)}"
-            )
+            # 这里可以实现重复回复检测逻辑
+            pass
         except Exception as e:
-            logger.warning(f"会话结束处理失败: {e}")
+            logger.warning(f"回复处理失败: {e}")
+
+        return response
+
+
+class MessageSendingHandler(KnowledgeFederationHookHandler):
+    """message_sending 钩子处理器
+
+    官方接口：返回 { cancel: true } 取消发送
+    """
+
+    def __init__(self):
+        super().__init__(priority=80)
+
+    async def handle(self, context: Any) -> HookResponse:
+        """消息发送前检查"""
+        response = HookResponse()
+
+        # 检查敏感内容
+        sensitive_patterns = [
+            (r"api[_-]?key", "API密钥"),
+            (r"password", "密码"),
+            (r"secret", "密钥"),
+            (r"token", "令牌"),
+        ]
+
+        message = context.get("message", "") if isinstance(context, dict) else str(context)
+
+        for pattern, reason in sensitive_patterns:
+            import re
+            if re.search(pattern, message, re.IGNORECASE):
+                logger.warning(f"检测到敏感内容: {reason}")
+                response.requireApproval = True
+                response.metadata["reason"] = f"包含敏感信息: {reason}"
+                return response
+
+        return response
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -204,153 +264,129 @@ class SessionEndHookHandler(HookHandler):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class HookDispatcher:
-    """钩子调度器"""
+    """OpenClaw 2.0 钩子调度器"""
 
     def __init__(self):
-        self.handlers: Dict[HookType, List[HookHandler]] = {
-            HookType.TOOL_DISPATCH: [],
-            HookType.TOOL_RESULT: [],
-            HookType.SESSION_START: [],
-            HookType.SESSION_END: [],
-            HookType.RULE_EVALUATED: [],
-            HookType.MEMORY_STORED: [],
+        self.handlers: Dict[OpenClawHook, List[KnowledgeFederationHookHandler]] = {
+            OpenClawHook.BEFORE_TOOL_CALL: [],
+            OpenClawHook.BEFORE_INSTALL: [],
+            OpenClawHook.REPLY_DISPATCH: [],
+            OpenClawHook.MESSAGE_SENDING: [],
         }
         self.call_log: List[Dict] = []
 
-    def register(self, hook_type: HookType, handler: HookHandler) -> None:
+    def register(self, hook: OpenClawHook, handler: KnowledgeFederationHookHandler) -> None:
         """注册钩子处理器"""
-        self.handlers[hook_type].append(handler)
-        # 按优先级排序
-        self.handlers[hook_type].sort(key=lambda h: h.priority, reverse=True)
-        logger.info(f"注册钩子处理器: {hook_type.value} -> {type(handler).__name__}")
+        self.handlers[hook].append(handler)
+        self.handlers[hook].sort(key=lambda h: h.priority, reverse=True)
+        logger.info(f"注册钩子处理器: {hook.value} -> {type(handler).__name__}")
 
-    def unregister(self, hook_type: HookType, handler: HookHandler) -> None:
+    def unregister(self, hook: OpenClawHook, handler: KnowledgeFederationHookHandler) -> None:
         """注销钩子处理器"""
-        if handler in self.handlers[hook_type]:
-            self.handlers[hook_type].remove(handler)
-            logger.info(f"注销钩子处理器: {hook_type.value} -> {type(handler).__name__}")
+        if handler in self.handlers[hook]:
+            self.handlers[hook].remove(handler)
+            logger.info(f"注销钩子处理器: {hook.value} -> {type(handler).__name__}")
 
-    async def dispatch(self, hook_type: HookType,
-                       context: HookContext) -> Optional[Dict]:
-        """调度钩子"""
-        handlers = self.handlers.get(hook_type, [])
+    async def dispatch(self, hook: OpenClawHook, context: Any) -> HookResponse:
+        """调度钩子并返回 OpenClaw 格式响应"""
+        handlers = self.handlers.get(hook, [])
         if not handlers:
-            return None
+            return HookResponse()
 
-        result = None
+        response = HookResponse()
         for handler in handlers:
             if not handler.enabled:
                 continue
 
             try:
-                hook_result = await handler.pre_hook(context)
-                if hook_result:
-                    result = hook_result
+                result = await handler.handle(context)
+                if result.block or result.requireApproval or result.handled or result.cancel:
+                    return result
+                # 合并 metadata
+                if result.metadata:
+                    response.metadata.update(result.metadata)
             except Exception as e:
-                logger.error(f"钩子 {hook_type.value} 执行失败: {e}")
+                logger.error(f"钩子 {hook.value} 执行失败: {e}")
 
         # 记录调用
         self.call_log.append({
-            "hook_type": hook_type.value,
+            "hook": hook.value,
             "timestamp": datetime.now(timezone(timedelta(hours=8))).isoformat(),
-            "session_id": context.session_id,
         })
 
-        return result
-
-    async def dispatch_post(self, hook_type: HookType,
-                            context: HookContext,
-                            result: Any = None) -> None:
-        """调度后置钩子"""
-        handlers = self.handlers.get(hook_type, [])
-        for handler in handlers:
-            if not handler.enabled:
-                continue
-
-            try:
-                await handler.post_hook(context, result)
-            except Exception as e:
-                logger.error(f"后置钩子 {hook_type.value} 执行失败: {e}")
+        return response
 
     def get_statistics(self) -> Dict:
         """获取钩子调用统计"""
         return {
             "total_calls": len(self.call_log),
             "by_type": self._count_by_type(),
-            "handlers": self._count_handlers(),
+            "handlers": {h.value: len(handlers) for h, handlers in self.handlers.items()},
         }
 
     def _count_by_type(self) -> Dict[str, int]:
         counts = {}
         for log in self.call_log:
-            t = log["hook_type"]
-            counts[t] = counts.get(t, 0) + 1
+            h = log["hook"]
+            counts[h] = counts.get(h, 0) + 1
         return counts
 
-    def _count_handlers(self) -> Dict[str, int]:
-        return {ht.value: len(hs) for ht, hs in self.handlers.items()}
-
 
 # ═══════════════════════════════════════════════════════════════════════════
-# OpenClaw 2.0 钩子配置生成器
+# OpenClaw 插件配置生成器
 # ═══════════════════════════════════════════════════════════════════════════
 
-def generate_hook_config(central_api: str = None) -> Dict:
-    """生成 OpenClaw 钩子配置文件"""
+def generate_openclaw_plugin_config(central_api: str = None) -> Dict:
+    """生成 OpenClaw 2.0 插件配置 (manifest.json)"""
 
     workspace = Path.home() / ".openclaw" / "workspace"
-    hook_dir = workspace / ".hooks"
-    hook_dir.mkdir(parents=True, exist_ok=True)
+    plugin_dir = workspace / "plugins" / "knowledge-federation"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
 
-    config = {
+    manifest = {
+        "name": "knowledge-federation",
         "version": "2.0.0",
+        "description": "跨Agent知识联邦与规则共享系统",
+        "author": "OpenClaw Community",
         "hooks": {
-            "agent:tool_dispatch": {
-                "enabled": True,
-                "script": str(hook_dir / "tool_dispatch.py"),
-                "timeout_ms": 100,
-            },
-            "agent:tool_result": {
-                "enabled": True,
-                "script": str(hook_dir / "tool_result.py"),
-                "timeout_ms": 200,
-            },
-            "session:start": {
-                "enabled": True,
-                "script": str(hook_dir / "session_start.py"),
-                "timeout_ms": 50,
-            },
-            "session:end": {
-                "enabled": True,
-                "script": str(hook_dir / "session_end.py"),
-                "timeout_ms": 100,
-            },
+            "before_tool_call": "hooks/before_tool_call.py",
+            "before_install": "hooks/before_install.py",
+            "reply_dispatch": "hooks/reply_dispatch.py",
+            "message_sending": "hooks/message_sending.py",
         },
+        "permissions": [
+            "tool:call",
+            "memory:read",
+            "memory:write",
+            "network:fetch",
+        ],
         "environment": {
             "KNOWLEDGE_FEDERATION_API": central_api or "",
-            "HOOK_LOG_DIR": str(workspace / ".hook-logs"),
         },
     }
 
-    return config
+    return manifest, plugin_dir
 
 
-def generate_hook_script(hook_type: HookType, output_path: Path) -> None:
-    """生成钩子脚本文件"""
+def generate_hook_script(hook: OpenClawHook, output_path: Path, central_api: str = None) -> None:
+    """生成 OpenClaw 2.0 钩子脚本"""
 
-    if hook_type == HookType.TOOL_DISPATCH:
-        content = '''#!/usr/bin/env python3
-"""tool_dispatch.py - OpenClaw agent:tool_dispatch hook"""
+    workspace = Path.home() / ".openclaw" / "workspace"
 
+    if hook == OpenClawHook.BEFORE_TOOL_CALL:
+        content = f'''#!/usr/bin/env python3
+"""before_tool_call.py - OpenClaw before_tool_call hook
+
+官方接口: 返回 {{ block: true }} 阻止, {{ requireApproval: true }} 暂停
+"""
 import json
 import sys
 from pathlib import Path
 
-# 添加 skills 到路径
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from skills.knowledge_federation.scripts.hook_integration import (
-    HookDispatcher, ToolDispatchHookHandler, ToolDispatchContext
+    HookDispatcher, OpenClawHook, BeforeToolCallHandler, ToolCallContext, HookResponse
 )
 from skills.fusion_engine.scripts.fusion_engine import MultiSourceFusionEngine
 from skills.rule_optimizer.scripts.rule_optimizer import RuleOptimizer
@@ -359,149 +395,155 @@ from datetime import datetime, timezone, timedelta
 
 async def main():
     data = json.loads(sys.stdin.read())
-    session_id = data.get("session_id", "unknown")
-    tool_name = data.get("tool_name", "")
-    tool_args = data.get("args", {})
+
+    # 构建上下文
+    context = ToolCallContext(
+        tool=data.get("tool", ""),
+        args=data.get("args", {{}}),
+        session_id=data.get("sessionId", "unknown"),
+        agent_id=data.get("agentId", "unknown"),
+        timestamp=datetime.now(timezone(timedelta(hours=8))).isoformat(),
+    )
 
     # 初始化组件
-    workspace = Path.home() / ".openclaw" / "workspace"
-    central_api = data.get("KNOWLEDGE_FEDERATION_API")
+    central_api = "{central_api}" or data.get("KNOWLEDGE_FEDERATION_API")
 
     fusion = MultiSourceFusionEngine()
     optimizer = RuleOptimizer()
-    fed = KnowledgeFederation(workspace_dir=str(workspace), central_api=central_api)
+    fed = KnowledgeFederation(workspace_dir=str(Path.home() / ".openclaw" / "workspace"), central_api=central_api)
 
     # 创建调度器
     dispatcher = HookDispatcher()
-    dispatcher.register(
-        "agent:tool_dispatch",
-        ToolDispatchHookHandler(
-            knowledge_fed=fed,
-            fusion_engine=fusion,
-            rule_optimizer=optimizer,
-        )
-    )
-
-    # 构建上下文
-    context = ToolDispatchContext(
-        session_id=session_id,
-        agent_id=data.get("agent_id", "unknown"),
-        timestamp=datetime.now(timezone(timedelta(hours=8))).isoformat(),
-        tool_name=tool_name,
-        tool_args=tool_args,
-        metadata=data,
-    )
+    dispatcher.register(OpenClawHook.BEFORE_TOOL_CALL, BeforeToolCallHandler(
+        knowledge_fed=fed,
+        fusion_engine=fusion,
+        rule_optimizer=optimizer,
+    ))
 
     # 执行钩子
-    result = await dispatcher.dispatch("agent:tool_dispatch", context)
+    response = await dispatcher.dispatch(OpenClawHook.BEFORE_TOOL_CALL, context)
 
-    # 输出结果
-    print(json.dumps(result or {}, ensure_ascii=False))
+    # 输出 OpenClaw 格式响应
+    output = {{
+        "block": response.block,
+        "requireApproval": response.requireApproval,
+        "metadata": response.metadata,
+    }}
+
+    print(json.dumps(output, ensure_ascii=False))
 
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
 '''
-    elif hook_type == HookType.TOOL_RESULT:
-        content = '''#!/usr/bin/env python3
-"""tool_result.py - OpenClaw agent:tool_result hook"""
-
+    elif hook == OpenClawHook.BEFORE_INSTALL:
+        content = f'''#!/usr/bin/env python3
+"""before_install.py - OpenClaw before_install hook"""
 import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from skills.knowledge_federation.scripts.hook_integration import (
-    HookDispatcher, ToolResultHookHandler, ToolResultContext
+    HookDispatcher, OpenClawHook, BeforeInstallHandler, InstallContext
 )
-from skills.knowledge_federation.scripts.knowledge_federation import KnowledgeFederation
-from datetime import datetime, timezone, timedelta
 
 async def main():
     data = json.loads(sys.stdin.read())
-    session_id = data.get("session_id", "unknown")
-    tool_name = data.get("tool_name", "")
-    tool_args = data.get("args", {})
-    success = data.get("success", False)
-    error = data.get("error", "")
-    duration_ms = data.get("duration_ms", 0)
 
-    workspace = Path.home() / ".openclaw" / "workspace"
-    central_api = data.get("KNOWLEDGE_FEDERATION_API")
-
-    fed = KnowledgeFederation(workspace_dir=str(workspace), central_api=central_api)
+    context = InstallContext(
+        package=data.get("package", ""),
+        source=data.get("source", ""),
+    )
 
     dispatcher = HookDispatcher()
-    dispatcher.register(
-        "agent:tool_result",
-        ToolResultHookHandler(knowledge_fed=fed)
-    )
+    dispatcher.register(OpenClawHook.BEFORE_INSTALL, BeforeInstallHandler())
 
-    context = ToolResultContext(
-        session_id=session_id,
-        agent_id=data.get("agent_id", "unknown"),
-        timestamp=datetime.now(timezone(timedelta(hours=8))).isoformat(),
-        tool_name=tool_name,
-        tool_args=tool_args,
-        success=success,
-        error=error,
-        duration_ms=duration_ms,
-        user_satisfaction=data.get("user_satisfaction", 3.0),
-    )
+    response = await dispatcher.dispatch(OpenClawHook.BEFORE_INSTALL, context)
 
-    await dispatcher.dispatch_post("agent:tool_result", context)
+    print(json.dumps({{"block": response.block, "metadata": response.metadata}}, ensure_ascii=False))
 
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
 '''
-    elif hook_type == HookType.SESSION_END:
-        content = '''#!/usr/bin/env python3
-"""session_end.py - OpenClaw session:end hook"""
-
+    elif hook == OpenClawHook.REPLY_DISPATCH:
+        content = f'''#!/usr/bin/env python3
+"""reply_dispatch.py - OpenClaw reply_dispatch hook"""
 import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from skills.knowledge_federation.scripts.knowledge_federation import KnowledgeFederation
-from datetime import datetime, timezone, timedelta
+from skills.knowledge_federation.scripts.hook_integration import (
+    HookDispatcher, OpenClawHook, ReplyDispatchHandler
+)
 
-def main():
+async def main():
     data = json.loads(sys.stdin.read())
-    session_id = data.get("session_id", "unknown")
 
-    workspace = Path.home() / ".openclaw" / "workspace"
-    central_api = data.get("KNOWLEDGE_FEDERATION_API")
+    fed = None
+    try:
+        from skills.knowledge_federation.scripts.knowledge_federation import KnowledgeFederation
+        fed = KnowledgeFederation(workspace_dir=str(Path.home() / ".openclaw" / "workspace"))
+    except Exception:
+        pass
 
-    fed = KnowledgeFederation(workspace_dir=str(workspace), central_api=central_api)
-    stats = fed.get_statistics()
+    dispatcher = HookDispatcher()
+    dispatcher.register(OpenClawHook.REPLY_DISPATCH, ReplyDispatchHandler(knowledge_fed=fed))
 
-    print(json.dumps({
-        "session_id": session_id,
-        "timestamp": datetime.now(timezone(timedelta(hours=8))).isoformat(),
-        "federation_stats": stats,
-    }, ensure_ascii=False))
+    response = await dispatcher.dispatch(OpenClawHook.REPLY_DISPATCH, data)
+
+    print(json.dumps({{"handled": response.handled, "metadata": response.metadata}}, ensure_ascii=False))
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
+'''
+    elif hook == OpenClawHook.MESSAGE_SENDING:
+        content = f'''#!/usr/bin/env python3
+"""message_sending.py - OpenClaw message_sending hook"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from skills.knowledge_federation.scripts.hook_integration import (
+    HookDispatcher, OpenClawHook, MessageSendingHandler
+)
+
+async def main():
+    data = json.loads(sys.stdin.read())
+
+    dispatcher = HookDispatcher()
+    dispatcher.register(OpenClawHook.MESSAGE_SENDING, MessageSendingHandler())
+
+    response = await dispatcher.dispatch(OpenClawHook.MESSAGE_SENDING, data)
+
+    print(json.dumps({{"cancel": response.cancel, "requireApproval": response.requireApproval, "metadata": response.metadata}}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
 '''
     else:
         content = f'''#!/usr/bin/env python3
-"""hook_{hook_type.value.replace(":", "_")}.py - OpenClaw {hook_type.value} hook"""
+"""hook.py - OpenClaw hook"""
 import json
 import sys
 
 def main():
     data = json.loads(sys.stdin.read())
-    print(json.dumps({{"status": "ok", "hook": "{hook_type.value}"}}, ensure_ascii=False))
+    print(json.dumps({{"status": "ok"}}, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()
 '''
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(content)
     output_path.chmod(0o755)
 
@@ -513,87 +555,67 @@ if __name__ == "__main__":
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="OpenClaw 2.0 钩子集成")
-    parser.add_argument("--setup", action="store_true", help="生成钩子配置文件")
+    parser = argparse.ArgumentParser(description="OpenClaw 2.0 钩子集成 (v2026.4.x)")
+    parser.add_argument("--setup", action="store_true", help="生成插件配置")
     parser.add_argument("--check", action="store_true", help="检查钩子状态")
     parser.add_argument("--test", action="store_true", help="测试钩子调用")
     parser.add_argument("--central-api", help="中央API地址")
     args = parser.parse_args()
 
     if args.setup:
-        workspace = Path.home() / ".openclaw" / "workspace"
-        hook_dir = workspace / ".hooks"
-        hook_dir.mkdir(parents=True, exist_ok=True)
+        manifest, plugin_dir = generate_openclaw_plugin_config(args.central_api)
 
-        # 生成配置
-        config = generate_hook_config(args.central_api)
-        config_file = hook_dir / "config.json"
-        config_file.write_text(json.dumps(config, indent=2, ensure_ascii=False))
-        print(f"✅ 钩子配置已生成: {config_file}")
+        # 保存 manifest
+        manifest_file = plugin_dir / "manifest.json"
+        manifest_file.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+        print(f"✅ 插件配置已生成: {manifest_file}")
 
         # 生成钩子脚本
-        for hook_type in [HookType.TOOL_DISPATCH, HookType.TOOL_RESULT, HookType.SESSION_END]:
-            script_path = hook_dir / f"{hook_type.value.replace(':', '_')}.py"
-            generate_hook_script(hook_type, script_path)
+        hooks_dir = plugin_dir / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        for hook in OpenClawHook:
+            script_path = hooks_dir / f"{hook.value}.py"
+            generate_hook_script(hook, script_path, args.central_api)
             print(f"✅ 钩子脚本已生成: {script_path}")
 
         print("\n📝 下一步:")
-        print("1. 编辑 .hooks/config.json 设置 KNOWLEDGE_FEDERATION_API")
-        print("2. 重启 OpenClaw agent")
+        print("1. 将插件目录复制到 ~/.openclaw/plugins/knowledge-federation/")
+        print("2. 运行 openclaw doctor --fix 进行迁移")
         print("3. 使用 --check 验证钩子状态")
 
     elif args.check:
         workspace = Path.home() / ".openclaw" / "workspace"
-        hook_dir = workspace / ".hooks"
-        config_file = hook_dir / "config.json"
+        plugin_dir = workspace / "plugins" / "knowledge-federation"
+        manifest_file = plugin_dir / "manifest.json"
 
-        if not config_file.exists():
-            print("❌ 钩子未配置，请先运行 --setup")
+        if not manifest_file.exists():
+            print("❌ 插件未配置，请先运行 --setup")
             sys.exit(1)
 
-        config = json.loads(config_file.read_text())
-        print("✅ 钩子配置:")
-        print(json.dumps(config, indent=2, ensure_ascii=False))
+        manifest = json.loads(manifest_file.read_text())
+        print("✅ OpenClaw 2.0 插件配置:")
+        print(json.dumps(manifest, indent=2, ensure_ascii=False))
 
     elif args.test:
-        print("🧪 测试钩子调用...")
-        # 简单的测试
+        print("🧪 测试 OpenClaw 2.0 钩子调用...")
+
         dispatcher = HookDispatcher()
-        dispatcher.register(
-            HookType.TOOL_DISPATCH,
-            ToolDispatchHookHandler()
-        )
-        dispatcher.register(
-            HookType.TOOL_RESULT,
-            ToolResultHookHandler()
-        )
+        dispatcher.register(OpenClawHook.BEFORE_TOOL_CALL, BeforeToolCallHandler())
 
         import asyncio
 
         async def run_test():
-            # 测试 tool_dispatch
-            context = ToolDispatchContext(
+            context = ToolCallContext(
+                tool="bash",
+                args={"command": "ls -la"},
                 session_id="test_session",
                 agent_id="test_agent",
                 timestamp=datetime.now(timezone(timedelta(hours=8))).isoformat(),
-                tool_name="bash",
-                tool_args={"command": "ls"},
             )
-            result = await dispatcher.dispatch(HookType.TOOL_DISPATCH, context)
-            print(f"✅ tool_dispatch 结果: {result}")
 
-            # 测试 tool_result
-            result_context = ToolResultContext(
-                session_id="test_session",
-                agent_id="test_agent",
-                timestamp=datetime.now(timezone(timedelta(hours=8))).isoformat(),
-                tool_name="bash",
-                tool_args={"command": "ls"},
-                success=True,
-                duration_ms=50.0,
-            )
-            await dispatcher.dispatch_post(HookType.TOOL_RESULT, result_context)
-            print("✅ tool_result 执行完成")
+            response = await dispatcher.dispatch(OpenClawHook.BEFORE_TOOL_CALL, context)
+            print(f"✅ before_tool_call 响应: block={response.block}, requireApproval={response.requireApproval}")
 
             print(f"📊 钩子统计: {dispatcher.get_statistics()}")
 
