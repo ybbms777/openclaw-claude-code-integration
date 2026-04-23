@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Generate a bilingual GitHub banner for OECK."""
+"""Generate a cleaner, high-impact GitHub banner for OECK."""
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,131 +17,157 @@ WIDTH = 1280
 HEIGHT = 640
 
 
-def load_font(name: str, size: int) -> ImageFont.FreeTypeFont:
-    candidates = [
-        f"/System/Library/Fonts/Supplemental/{name}",
-        f"/System/Library/Fonts/{name}",
-        f"/Library/Fonts/{name}",
+def load_font(candidates: list[tuple[str, int | None]], size: int) -> ImageFont.FreeTypeFont:
+    search_roots = [
+        Path("/System/Library/Fonts"),
+        Path("/System/Library/Fonts/Supplemental"),
+        Path("/Library/Fonts"),
     ]
-    for candidate in candidates:
-        path = Path(candidate)
-        if path.exists():
-            return ImageFont.truetype(str(path), size=size)
+    for name, index in candidates:
+        for root in search_roots:
+            path = root / name
+            if path.exists():
+                kwargs = {"size": size}
+                if index is not None:
+                    kwargs["index"] = index
+                return ImageFont.truetype(str(path), **kwargs)
     return ImageFont.load_default()
 
 
-def draw_gradient(draw: ImageDraw.ImageDraw) -> None:
+def background() -> Image.Image:
+    image = Image.new("RGBA", (WIDTH, HEIGHT), (8, 11, 17, 255))
+    pixels = image.load()
     for y in range(HEIGHT):
-        t = y / HEIGHT
-        r = int(17 + (43 - 17) * t)
-        g = int(28 + (47 - 28) * t)
-        b = int(33 + (58 - 33) * t)
-        draw.line((0, y, WIDTH, y), fill=(r, g, b))
+        blend = y / (HEIGHT - 1)
+        top = (7, 10, 16)
+        bottom = (17, 22, 32)
+        row = tuple(int(top[i] + (bottom[i] - top[i]) * blend) for i in range(3))
+        for x in range(WIDTH):
+            pixels[x, y] = (*row, 255)
+    return image
 
 
-def add_mesh_orbs(base: Image.Image) -> None:
-    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+def add_glow(base: Image.Image, box: tuple[int, int, int, int], color: tuple[int, int, int, int], blur: int) -> None:
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    orbs = [
-        ((220, 170), 320, (255, 129, 72, 110)),
-        ((1030, 130), 260, (63, 200, 219, 95)),
-        ((960, 470), 360, (255, 209, 102, 60)),
-        ((180, 520), 260, (109, 76, 255, 50)),
-    ]
-    for center, radius, color in orbs:
-        x, y = center
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
-    overlay = overlay.filter(ImageFilter.GaussianBlur(48))
+    draw.ellipse(box, fill=color)
+    overlay = overlay.filter(ImageFilter.GaussianBlur(blur))
     base.alpha_composite(overlay)
 
 
-def add_grid(draw: ImageDraw.ImageDraw) -> None:
-    for x in range(0, WIDTH, 48):
-        alpha = 22 if x % 192 else 38
-        draw.line((x, 0, x, HEIGHT), fill=(255, 255, 255, alpha), width=1)
-    for y in range(0, HEIGHT, 48):
-        alpha = 18 if y % 192 else 30
-        draw.line((0, y, WIDTH, y), fill=(255, 255, 255, alpha), width=1)
+def add_column(base: Image.Image) -> None:
+    glow = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(glow)
+    draw.rounded_rectangle((842, 64, 1186, 576), radius=72, fill=(46, 210, 232, 48))
+    draw.rounded_rectangle((874, 104, 1150, 536), radius=56, fill=(20, 116, 132, 82))
+    glow = glow.filter(ImageFilter.GaussianBlur(34))
+    base.alpha_composite(glow)
+
+    panel = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(panel)
+    draw.rounded_rectangle((860, 82, 1170, 558), radius=64, fill=(9, 17, 24, 214), outline=(185, 241, 247, 136), width=2)
+    draw.rounded_rectangle((892, 120, 1138, 520), radius=52, fill=(14, 39, 48, 216), outline=(101, 219, 233, 82), width=1)
+    base.alpha_composite(panel)
 
 
-def add_topographic_lines(draw: ImageDraw.ImageDraw) -> None:
-    for offset in range(7):
-        points = []
-        for x in range(-20, WIDTH + 20, 18):
-            wave = math.sin((x / 145.0) + offset * 0.65) * (18 + offset * 5)
-            drift = math.cos((x / 320.0) - offset * 0.4) * 9
-            y = 90 + offset * 42 + wave + drift
-            points.append((x, y))
-        draw.line(points, fill=(255, 255, 255, 36), width=2)
-
-    for offset in range(6):
-        points = []
-        for x in range(-20, WIDTH + 20, 16):
-            wave = math.sin((x / 120.0) + offset * 0.82) * (16 + offset * 4)
-            drift = math.cos((x / 270.0) + offset * 0.5) * 13
-            y = 430 + offset * 24 + wave + drift
-            points.append((x, y))
-        draw.line(points, fill=(106, 217, 227, 30), width=2)
-
-
-def add_architecture_nodes(draw: ImageDraw.ImageDraw) -> None:
-    nodes = [
-        ((136, 530), "Content"),
-        ((306, 446), "Runtime"),
-        ((484, 524), "Policy"),
-        ((676, 416), "Adapters"),
-        ((906, 512), "Checks"),
-        ((1112, 414), "Bundles"),
-    ]
-    for idx, ((x, y), label) in enumerate(nodes):
-        next_node = nodes[idx + 1][0] if idx + 1 < len(nodes) else None
-        if next_node:
-            draw.line((x, y, next_node[0], next_node[1]), fill=(255, 255, 255, 55), width=3)
-            draw.line((x, y, next_node[0], next_node[1]), fill=(63, 200, 219, 35), width=7)
-        draw.ellipse((x - 9, y - 9, x + 9, y + 9), fill=(255, 211, 138, 255))
-        draw.ellipse((x - 20, y - 20, x + 20, y + 20), outline=(255, 255, 255, 55), width=2)
-        draw.text((x + 18, y - 11), label, fill=(222, 233, 237, 210), font=load_font("Avenir Next.ttc", 22))
-
-
-def add_badge(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, fill: tuple[int, int, int, int]) -> None:
-    font = load_font("Avenir Next.ttc", 22)
-    left, top = xy
-    bbox = draw.textbbox((0, 0), text, font=font)
-    width = bbox[2] - bbox[0] + 34
-    height = bbox[3] - bbox[1] + 18
-    draw.rounded_rectangle((left, top, left + width, top + height), radius=16, fill=fill, outline=(255, 255, 255, 42), width=1)
-    draw.text((left + 17, top + 8), text, fill=(249, 250, 251, 255), font=font)
-
-
-def add_mode_chip(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str) -> int:
-    font = load_font("Avenir Next.ttc", 18)
-    left, top = xy
-    bbox = draw.textbbox((0, 0), text, font=font)
-    width = bbox[2] - bbox[0] + 26
-    height = bbox[3] - bbox[1] + 14
-    draw.rounded_rectangle(
-        (left, top, left + width, top + height),
-        radius=14,
-        fill=(12, 22, 31, 214),
-        outline=(255, 255, 255, 42),
-        width=1,
+def add_slash(base: Image.Image) -> None:
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    draw.polygon(
+        [(676, 470), (1020, 246), (1118, 246), (774, 470)],
+        fill=(255, 124, 71, 230),
     )
-    draw.text((left + 13, top + 6), text, fill=(235, 239, 241, 248), font=font)
-    return width
+    draw.polygon(
+        [(688, 490), (1032, 266), (1086, 266), (742, 490)],
+        fill=(255, 207, 174, 102),
+    )
+    overlay = overlay.filter(ImageFilter.GaussianBlur(8))
+    base.alpha_composite(overlay)
+
+
+def add_structure(draw: ImageDraw.ImageDraw) -> None:
+    for x in range(786, 1200, 62):
+        draw.line((x, 96, x, 548), fill=(173, 224, 230, 18), width=1)
+    for y in range(112, 548, 62):
+        draw.line((816, y, 1200, y), fill=(173, 224, 230, 18), width=1)
+
+    draw.line((94, 516, 724, 516), fill=(255, 255, 255, 42), width=1)
+    draw.line((94, 542, 720, 542), fill=(255, 255, 255, 20), width=1)
+
+
+def add_title(draw: ImageDraw.ImageDraw) -> None:
+    eyebrow_font = load_font([("Avenir Next.ttc", 0), ("HelveticaNeue.ttc", 0)], 22)
+    kicker_font = load_font([("Avenir Next.ttc", 0), ("HelveticaNeue.ttc", 0)], 28)
+    title_font = load_font([("DIN Condensed Bold.ttf", None), ("Arial Black.ttf", None)], 166)
+    subtitle_font = load_font([("Avenir Next.ttc", 0), ("HelveticaNeue.ttc", 0)], 26)
+    chinese_font = load_font([("Hiragino Sans GB.ttc", 0)], 22)
+
+    draw.text((86, 78), "OPENCLAW / CLAUDE / CODEX", font=eyebrow_font, fill=(255, 211, 179, 255))
+    draw.text((86, 116), "OECK", font=title_font, fill=(246, 248, 249, 255))
+    draw.text((92, 286), "Enhancement & Compatibility Kit", font=kicker_font, fill=(227, 235, 239, 235))
+    draw.text((92, 336), "Unified policy, context, distribution, and observability.", font=subtitle_font, fill=(185, 211, 217, 228))
+    draw.text((92, 376), "统一策略 · 统一上下文 · 统一分发 · 统一观测 · 统一适配器", font=chinese_font, fill=(173, 225, 232, 230))
+
+
+def add_stack(draw: ImageDraw.ImageDraw) -> None:
+    label_font = load_font([("Avenir Next.ttc", 0), ("HelveticaNeue.ttc", 0)], 24)
+    mono_font = load_font([("Helvetica.ttc", 1), ("Avenir.ttc", 0)], 17)
+
+    draw.text((910, 132), "Runtime Surface", font=label_font, fill=(246, 248, 249, 240))
+    items = [
+        ("01", "Policy Engine"),
+        ("02", "Context Engine"),
+        ("03", "Plugin + Bundle"),
+        ("04", "Optional Adapters"),
+    ]
+    y = 200
+    for code, label in items:
+        draw.rounded_rectangle((908, y - 8, 1124, y + 36), radius=16, fill=(7, 13, 20, 114), outline=(155, 235, 244, 48), width=1)
+        draw.text((928, y), code, font=mono_font, fill=(255, 181, 141, 255))
+        draw.text((978, y - 1), label, font=label_font, fill=(231, 238, 241, 244))
+        y += 76
+
+
+def add_host_badges(draw: ImageDraw.ImageDraw) -> None:
+    font = load_font([("Avenir Next.ttc", 0), ("HelveticaNeue.ttc", 0)], 20)
+    badges = [
+        ("OpenClaw Native", (255, 129, 84, 230), 92),
+        ("Claude Bundle", (60, 201, 221, 226), 314),
+        ("Codex Bundle", (79, 118, 255, 230), 516),
+    ]
+    y = 566
+    for text, color, x in badges:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        width = bbox[2] - bbox[0] + 32
+        draw.rounded_rectangle((x, y - 6, x + width, y + 30), radius=18, fill=(10, 16, 23, 208), outline=color, width=2)
+        draw.text((x + 16, y), text, font=font, fill=(246, 248, 249, 250))
+
+
+def add_texture(base: Image.Image) -> None:
+    noise = Image.effect_noise((WIDTH, HEIGHT), 8).convert("L")
+    noise = ImageOps.colorize(noise, black=(8, 11, 17), white=(22, 30, 39)).convert("RGBA")
+    noise.putalpha(22)
+    base.alpha_composite(noise)
+
+
+def add_ghost_title(draw: ImageDraw.ImageDraw) -> None:
+    ghost_font = load_font([("DIN Condensed Bold.ttf", None), ("Arial Black.ttf", None)], 170)
+    draw.text((102, 118), "OECK", font=ghost_font, fill=(108, 204, 219, 30), stroke_width=1, stroke_fill=(108, 204, 219, 46))
+    draw.text((110, 126), "OECK", font=ghost_font, fill=(255, 140, 92, 16))
 
 
 def write_philosophy() -> None:
-    text = """# Signal Atlas
+    text = """# Luminous Monolith
 
-Signal Atlas is a visual philosophy for software infrastructure that should feel less like a banner and more like an engineered artifact. Space is treated as a control surface: dense in a few deliberate regions, quiet everywhere else. The composition should look meticulously crafted, with every interval tuned until the graphic reads as a confident product signal rather than a decorative splash.
+Luminous Monolith treats software infrastructure as a single engineered object rather than a collage of features. The composition should feel carved, not assembled: one dominant form, one dominant gesture, and enough restraint that every decision reads as deliberate. The final image must look meticulously crafted and reduced until only the strongest visual signals remain.
 
-Color behaves like routed energy. Warm ember tones indicate governance and decisive intervention; cool cyan fields imply compatibility, context flow, and runtime continuity. These two systems should stay in productive tension, calibrated with painstaking attention so the image feels stable, technical, and deeply intentional rather than loud.
+Color should work like energy under pressure. The palette stays dark and controlled, then allows only a few calibrated emissions: a cold cyan glow for continuity, context, and system surface; a hotter ember slash for intervention, compatibility, and decisive routing. This contrast should feel expensive and precise, the product of deep expertise rather than decorative contrast.
 
-Geometry should suggest maps, traces, and layered protocols. Lines drift like topographic telemetry, while nodes and capsules imply host targets, policy checkpoints, and distribution surfaces. Every curve and connector should look labored over by someone operating at master level, with no casual ornament and no accidental complexity.
+Scale is the main communication system. One oversized typographic mass should anchor the entire piece and create immediate recognition from a distance. Supporting information must stay secondary, carefully spaced, and surgically sparse. The work should look like it was refined for countless hours by someone operating at master level, with no line, margin, or proportion left accidental.
 
-Typography is sparse and architectural. The title carries authority, the supporting labels behave like instrumentation, and bilingual text is used as a precision accent instead of exposition. The final work should feel like the result of deep expertise: meticulously crafted, restrained, and unmistakably product-grade.
+Geometry should suggest containment and transfer. A monolithic vertical volume holds the system surface, while a single diagonal vector cuts across it to imply activation and host-to-host movement. These forms should feel structural, as if the image were documenting a protocol artifact from an imaginary discipline. The result must be painstakingly tuned, with silence doing as much work as detail.
 
-The overall mood is optimistic without becoming soft. It should read as a compatibility kit that brings order to multiple hosts, not as a chaotic hacker collage. Negative space, layering, and pacing must all communicate control. The finished banner should look like it took countless hours of refinement and that every visual decision received painstaking care.
+Typography is forceful but disciplined. Words act as visual architecture first and explanation second. The hierarchy should be unmistakable: a monumental mark, a restrained descriptor, and a few precisely placed labels. The finished artifact must read as premium, confident, and unmistakably product-grade, with craftsmanship visible in every interval and edge.
 """
     PHILOSOPHY_PATH.write_text(text, encoding="utf-8")
 
@@ -151,60 +176,23 @@ def main() -> int:
     ASSETS.mkdir(parents=True, exist_ok=True)
     write_philosophy()
 
-    image = Image.new("RGBA", (WIDTH, HEIGHT), (14, 18, 24, 255))
+    image = background()
+    add_glow(image, (-120, 220, 560, 880), (255, 125, 78, 64), 90)
+    add_glow(image, (720, -40, 1310, 620), (52, 206, 230, 84), 110)
+    add_glow(image, (786, 96, 1242, 558), (52, 206, 230, 46), 34)
+    add_texture(image)
+    add_column(image)
+    add_slash(image)
+
     draw = ImageDraw.Draw(image, "RGBA")
-
-    draw_gradient(draw)
-    add_mesh_orbs(image)
-    draw = ImageDraw.Draw(image, "RGBA")
-    add_grid(draw)
-    add_topographic_lines(draw)
-
-    left_panel = [(54, 68), (676, 68), (618, 572), (54, 572)]
-    right_panel = [(734, 86), (1228, 86), (1228, 572), (804, 572)]
-    draw.polygon(left_panel, fill=(8, 12, 18, 122), outline=(255, 255, 255, 36))
-    draw.polygon(right_panel, fill=(8, 12, 18, 112), outline=(255, 255, 255, 30))
-
-    eyebrow_font = load_font("Avenir Next.ttc", 24)
-    title_font = load_font("BigCaslon.ttf", 58)
-    sub_font = load_font("Avenir Next.ttc", 28)
-    cn_font = load_font("Hiragino Sans GB.ttc", 24)
-
-    draw.text((92, 104), "OPENCLAW ENHANCEMENT & COMPATIBILITY KIT", fill=(255, 206, 160, 255), font=eyebrow_font)
-    draw.text((92, 154), "Governance, compatibility,\nand runtime enhancement.", fill=(248, 248, 246, 255), font=title_font, spacing=4)
-    draw.text((95, 325), "统一策略 · 统一上下文 · 统一分发 · 统一观测 · 统一适配器", fill=(202, 227, 230, 228), font=cn_font)
-    draw.text((95, 366), "For OpenClaw / Claude / Codex", fill=(231, 236, 238, 230), font=sub_font)
-
-    add_badge(draw, (92, 446), "OpenClaw Native Plugin", (255, 132, 81, 112))
-    add_badge(draw, (92, 500), "Claude Bundle", (63, 200, 219, 104))
-    add_badge(draw, (295, 500), "Codex Bundle", (72, 119, 255, 96))
-
-    add_architecture_nodes(draw)
-
-    draw.rounded_rectangle((820, 150, 1176, 252), radius=30, fill=(10, 17, 24, 214), outline=(255, 255, 255, 58), width=2)
-    draw.text((850, 176), "Mode Profiles", fill=(255, 209, 169, 255), font=load_font("Avenir Next.ttc", 24))
-    mode_rows = [("ask", "plan", "build"), ("debug", "review", "auto")]
-    chip_y = 208
-    for row in mode_rows:
-        chip_x = 850
-        for label in row:
-            chip_x += add_mode_chip(draw, (chip_x, chip_y), label) + 12
-        chip_y += 36
-
-    draw.rounded_rectangle((828, 274, 1182, 338), radius=22, fill=(7, 14, 20, 178), outline=(63, 200, 219, 102), width=2)
-    draw.multiline_text(
-        (850, 289),
-        "Local-first by default.\nOptional adapters via feature flags.",
-        fill=(217, 234, 238, 236),
-        font=load_font("Avenir Next.ttc", 20),
-        spacing=4,
-    )
-
-    footer_font = load_font("Avenir Next.ttc", 20)
-    draw.text((858, 544), "Banner + GitHub social preview asset", fill=(228, 231, 232, 185), font=footer_font)
+    add_structure(draw)
+    add_ghost_title(draw)
+    add_title(draw)
+    add_stack(draw)
+    add_host_badges(draw)
 
     image = image.convert("RGB")
-    image.save(PNG_PATH, quality=95)
+    image.save(PNG_PATH, optimize=True)
     print(PNG_PATH)
     return 0
 
