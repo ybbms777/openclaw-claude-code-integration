@@ -17,6 +17,12 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.session import SessionResolver
+from oeck.runtime_core.workspace import WorkspaceResolver
 from skills.shared.config import (
     WORKSPACE,
     LANCE_DB_PATH,
@@ -27,42 +33,18 @@ from skills.shared.logger import get_logger
 logger = get_logger(__name__)
 
 STATE_FILE = WORKSPACE / ".self_eval.json"
+SESSION_RESOLVER = SessionResolver(WorkspaceResolver.from_workspace(WORKSPACE))
 
 
 # ─── 读取 session 历史 ─────────────────────────────────────────────────────
 
 def get_latest_transcript_path() -> Path | None:
-    transcripts = sorted(
-        Path.home().glob(".openclaw/agents/main/sessions/*.jsonl"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True
-    )
-    return transcripts[0] if transcripts else None
+    return SESSION_RESOLVER.latest_transcript_path()
 
 
 def load_session_messages(limit: int = 200) -> list[dict]:
     """读取当前 session 最新 N 条消息"""
-    transcript_path = get_latest_transcript_path()
-    if not transcript_path:
-        return []
-
-    messages = []
-    with open(transcript_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                if obj.get("type") == "message":
-                    inner = obj.get("message", {})
-                    if isinstance(inner, dict) and inner.get("role") in ("user", "assistant"):
-                        messages.append(inner)
-                elif isinstance(obj, dict) and obj.get("role") in ("user", "assistant"):
-                    messages.append(obj)
-            except Exception:
-                pass
-    return messages[-limit:]
+    return SESSION_RESOLVER.load_messages(limit=limit)
 
 
 def extract_text(content) -> str:

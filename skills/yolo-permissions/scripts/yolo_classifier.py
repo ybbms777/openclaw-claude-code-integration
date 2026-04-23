@@ -113,7 +113,7 @@ def quick_rule_check(tool_name: str, params: dict) -> dict | None:
         if PERMISSION_SCORER_AVAILABLE:
             try:
                 scorer = PermissionScorer()
-                score = scorer.score_command(command, context={"tool": "bash"})
+                score = scorer.score_command("bash", {"command": command}, context={"tool": "bash"})
                 risk_level_str, _ = scorer.risk_level(score)
                 return {
                     "risk": risk_level_str,

@@ -25,6 +25,11 @@ from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
 from skills.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -39,6 +44,13 @@ class OpenClawHook(Enum):
     BEFORE_INSTALL = "before_install"           # 安装前
     REPLY_DISPATCH = "reply_dispatch"          # 回复分发
     MESSAGE_SENDING = "message_sending"         # 消息发送
+
+
+class HookType(Enum):
+    """兼容旧版 agent hooks."""
+
+    TOOL_DISPATCH = "agent:tool_dispatch"
+    TOOL_RESULT = "agent:tool_result"
 
 
 @dataclass
@@ -69,6 +81,30 @@ class InstallContext:
     source: str = ""                       # 来源
 
 
+@dataclass
+class HookContext:
+    session_id: str
+    agent_id: str
+    timestamp: str
+
+
+@dataclass
+class ToolDispatchContext(HookContext):
+    tool_name: str
+    tool_args: Dict[str, Any]
+    fusion_score: float = 0.0
+    rule_score: float = 0.0
+    permission_score: float = 0.0
+    final_decision: str = ""
+
+
+@dataclass
+class ToolResultContext(ToolDispatchContext):
+    success: bool = False
+    duration_ms: float = 0.0
+    user_satisfaction: float = 0.0
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 知识联邦钩子处理器
 # ═══════════════════════════════════════════════════════════════════════════
@@ -83,6 +119,16 @@ class KnowledgeFederationHookHandler:
     async def handle(self, context: Any) -> HookResponse:
         """处理钩子，返回 OpenClaw 格式响应"""
         return HookResponse()
+
+
+class ToolDispatchHookHandler(KnowledgeFederationHookHandler):
+    async def pre_hook(self, context: ToolDispatchContext) -> Optional[Dict]:
+        return None
+
+
+class ToolResultHookHandler(KnowledgeFederationHookHandler):
+    async def post_hook(self, context: ToolResultContext, result: Any = None) -> None:
+        return None
 
 
 class BeforeToolCallHandler(KnowledgeFederationHookHandler):
@@ -273,22 +319,47 @@ class HookDispatcher:
             OpenClawHook.REPLY_DISPATCH: [],
             OpenClawHook.MESSAGE_SENDING: [],
         }
+        self.compat_handlers: Dict[HookType, List[KnowledgeFederationHookHandler]] = {
+            HookType.TOOL_DISPATCH: [],
+            HookType.TOOL_RESULT: [],
+        }
         self.call_log: List[Dict] = []
 
-    def register(self, hook: OpenClawHook, handler: KnowledgeFederationHookHandler) -> None:
+    def register(self, hook: Any, handler: KnowledgeFederationHookHandler) -> None:
         """注册钩子处理器"""
+        if isinstance(hook, HookType):
+            self.compat_handlers[hook].append(handler)
+            self.compat_handlers[hook].sort(key=lambda h: h.priority, reverse=True)
+            logger.info(f"注册兼容钩子处理器: {hook.value} -> {type(handler).__name__}")
+            return
         self.handlers[hook].append(handler)
         self.handlers[hook].sort(key=lambda h: h.priority, reverse=True)
         logger.info(f"注册钩子处理器: {hook.value} -> {type(handler).__name__}")
 
-    def unregister(self, hook: OpenClawHook, handler: KnowledgeFederationHookHandler) -> None:
+    def unregister(self, hook: Any, handler: KnowledgeFederationHookHandler) -> None:
         """注销钩子处理器"""
+        if isinstance(hook, HookType):
+            if handler in self.compat_handlers[hook]:
+                self.compat_handlers[hook].remove(handler)
+            return
         if handler in self.handlers[hook]:
             self.handlers[hook].remove(handler)
             logger.info(f"注销钩子处理器: {hook.value} -> {type(handler).__name__}")
 
-    async def dispatch(self, hook: OpenClawHook, context: Any) -> HookResponse:
+    async def dispatch(self, hook: Any, context: Any) -> Any:
         """调度钩子并返回 OpenClaw 格式响应"""
+        if isinstance(hook, HookType):
+            handlers = self.compat_handlers.get(hook, [])
+            result = None
+            for handler in handlers:
+                if not handler.enabled:
+                    continue
+                if hasattr(handler, "pre_hook"):
+                    outcome = await handler.pre_hook(context)
+                    if outcome is not None:
+                        result = outcome
+            return result or {}
+
         handlers = self.handlers.get(hook, [])
         if not handlers:
             return HookResponse()
@@ -316,12 +387,23 @@ class HookDispatcher:
 
         return response
 
+    async def dispatch_post(self, hook: HookType, context: Any, result: Any = None) -> None:
+        handlers = self.compat_handlers.get(hook, [])
+        for handler in handlers:
+            if not handler.enabled:
+                continue
+            if hasattr(handler, "post_hook"):
+                await handler.post_hook(context, result=result)
+
     def get_statistics(self) -> Dict:
         """获取钩子调用统计"""
         return {
             "total_calls": len(self.call_log),
             "by_type": self._count_by_type(),
-            "handlers": {h.value: len(handlers) for h, handlers in self.handlers.items()},
+            "handlers": {
+                **{h.value: len(handlers) for h, handlers in self.handlers.items()},
+                **{h.value: len(handlers) for h, handlers in self.compat_handlers.items()},
+            },
         }
 
     def _count_by_type(self) -> Dict[str, int]:
@@ -339,7 +421,7 @@ class HookDispatcher:
 def generate_openclaw_plugin_config(central_api: str = None) -> Dict:
     """生成 OpenClaw 2.0 插件配置 (manifest.json)"""
 
-    workspace = Path.home() / ".openclaw" / "workspace"
+    workspace = WorkspaceResolver.from_workspace().layout.workspace_root
     plugin_dir = workspace / "plugins" / "knowledge-federation"
     plugin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -368,10 +450,38 @@ def generate_openclaw_plugin_config(central_api: str = None) -> Dict:
     return manifest, plugin_dir
 
 
-def generate_hook_script(hook: OpenClawHook, output_path: Path, central_api: str = None) -> None:
+def generate_hook_config(central_api: str = None) -> Dict:
+    """兼容旧版测试的 hook 配置格式."""
+    return {
+        "version": "2.0.0",
+        "hooks": {
+            HookType.TOOL_DISPATCH.value: "hooks/tool_dispatch.py",
+            HookType.TOOL_RESULT.value: "hooks/tool_result.py",
+        },
+        "environment": {
+            "KNOWLEDGE_FEDERATION_API": central_api or "",
+        },
+    }
+
+
+def generate_hook_script(hook: Any, output_path: Path, central_api: str = None) -> None:
     """生成 OpenClaw 2.0 钩子脚本"""
 
-    workspace = Path.home() / ".openclaw" / "workspace"
+    workspace = WorkspaceResolver.from_workspace().layout.workspace_root
+
+    if isinstance(hook, HookType):
+        compat_name = "tool_dispatch" if hook == HookType.TOOL_DISPATCH else "tool_result"
+        content = f'''#!/usr/bin/env python3
+"""compat {compat_name} hook"""
+from skills.knowledge_federation.scripts.hook_integration import HookDispatcher
+
+if __name__ == "__main__":
+    print("compat:{compat_name}")
+'''
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content)
+        output_path.chmod(0o755)
+        return
 
     if hook == OpenClawHook.BEFORE_TOOL_CALL:
         content = f'''#!/usr/bin/env python3
@@ -391,6 +501,7 @@ from skills.knowledge_federation.scripts.hook_integration import (
 from skills.fusion_engine.scripts.fusion_engine import MultiSourceFusionEngine
 from skills.rule_optimizer.scripts.rule_optimizer import RuleOptimizer
 from skills.knowledge_federation.scripts.knowledge_federation import KnowledgeFederation
+from oeck.runtime_core.workspace import WorkspaceResolver
 from datetime import datetime, timezone, timedelta
 
 async def main():
@@ -410,7 +521,7 @@ async def main():
 
     fusion = MultiSourceFusionEngine()
     optimizer = RuleOptimizer()
-    fed = KnowledgeFederation(workspace_dir=str(Path.home() / ".openclaw" / "workspace"), central_api=central_api)
+    fed = KnowledgeFederation(workspace_dir=str(WorkspaceResolver.from_workspace().layout.workspace_root), central_api=central_api)
 
     # 创建调度器
     dispatcher = HookDispatcher()
@@ -487,7 +598,8 @@ async def main():
     fed = None
     try:
         from skills.knowledge_federation.scripts.knowledge_federation import KnowledgeFederation
-        fed = KnowledgeFederation(workspace_dir=str(Path.home() / ".openclaw" / "workspace"))
+        from oeck.runtime_core.workspace import WorkspaceResolver
+        fed = KnowledgeFederation(workspace_dir=str(WorkspaceResolver.from_workspace().layout.workspace_root))
     except Exception:
         pass
 
@@ -585,7 +697,7 @@ def main():
         print("3. 使用 --check 验证钩子状态")
 
     elif args.check:
-        workspace = Path.home() / ".openclaw" / "workspace"
+        workspace = WorkspaceResolver.from_workspace().layout.workspace_root
         plugin_dir = workspace / "plugins" / "knowledge-federation"
         manifest_file = plugin_dir / "manifest.json"
 

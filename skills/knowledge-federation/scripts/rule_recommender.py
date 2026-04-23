@@ -25,6 +25,11 @@ from dataclasses import dataclass, asdict, field
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 项目类型定义
@@ -158,9 +163,10 @@ class ProjectAnalyzer:
         # 扫描项目文件
         files = self._scan_files()
         dirs = self._scan_dirs()
+        contents = self._scan_contents()
 
         # 匹配项目类型
-        all_items = files + dirs
+        all_items = files + dirs + contents
         for item in all_items:
             item_lower = item.lower()
             for ptype, spec in PROJECT_TYPES.items():
@@ -222,6 +228,27 @@ class ProjectAnalyzer:
             pass
         return dirs
 
+    def _scan_contents(self) -> List[str]:
+        """扫描少量文件内容关键词"""
+        snippets = []
+        try:
+            for path in self.project_dir.rglob("*"):
+                if not path.is_file():
+                    continue
+                if any(skip in path.parts for skip in [".git", "node_modules", "__pycache__", ".venv", "venv"]):
+                    continue
+                if path.suffix not in {".py", ".js", ".ts", ".rs", ".md", ".json", ".yaml", ".yml"}:
+                    continue
+                try:
+                    snippets.append(path.read_text(encoding="utf-8", errors="ignore")[:400])
+                except OSError:
+                    continue
+                if len(snippets) >= 20:
+                    break
+        except OSError:
+            return []
+        return snippets
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 规则推荐器
@@ -259,14 +286,15 @@ class RuleRecommender:
 
         for rule in rules:
             match_result = self._calculate_match(rule, project_profile)
+            latest_version = rule.get("versions", [{}])[-1] if rule.get("versions") else {}
+            effectiveness = rule.get("leaderboard_score", 0) or latest_version.get("effectiveness_score", 0)
 
-            if match_result["score"] >= min_score:
-                latest_version = rule.get("versions", [{}])[-1] if rule.get("versions") else {}
+            if match_result["score"] >= min_score and effectiveness >= 50:
                 candidate = RecommendationCandidate(
                     rule_id=rule.get("rule_id", ""),
                     version_id=latest_version.get("version_id", ""),
                     content=latest_version.get("content", {}),
-                    effectiveness_score=rule.get("leaderboard_score", 0) or latest_version.get("effectiveness_score", 0),
+                    effectiveness_score=effectiveness,
                     adoption_count=rule.get("adoption_count", 0),
                     project_tags=set(rule.get("project_tags", [])),
                     match_score=match_result["score"],
@@ -756,12 +784,12 @@ def main():
     roll_parser = subparsers.add_parser("rollback", help="版本回滚")
     roll_parser.add_argument("--rule-id", required=True, help="规则ID")
     roll_parser.add_argument("--version-id", required=True, help="目标版本ID")
-    roll_parser.add_argument("--workspace", default="~/.openclaw/workspace", help="工作目录")
+    roll_parser.add_argument("--workspace", default=None, help="工作目录")
 
     # history
     hist_parser = subparsers.add_parser("history", help="回滚历史")
     hist_parser.add_argument("--rule-id", help="规则ID")
-    hist_parser.add_argument("--workspace", default="~/.openclaw/workspace", help="工作目录")
+    hist_parser.add_argument("--workspace", default=None, help="工作目录")
 
     args = parser.parse_args()
 
@@ -793,7 +821,7 @@ def main():
         print(f"维度: {args.dimension}")
 
     elif args.command == "rollback":
-        workspace = Path(args.workspace).expanduser()
+        workspace = WorkspaceResolver.from_workspace(args.workspace).layout.workspace_root
         manager = VersionRollbackManager(str(workspace))
 
         result = manager.rollback_to(args.rule_id, args.version_id)
@@ -804,7 +832,7 @@ def main():
             print(f"❌ 未找到版本 {args.version_id}")
 
     elif args.command == "history":
-        workspace = Path(args.workspace).expanduser()
+        workspace = WorkspaceResolver.from_workspace(args.workspace).layout.workspace_root
         manager = VersionRollbackManager(str(workspace))
 
         history = manager.get_rollback_history(args.rule_id)

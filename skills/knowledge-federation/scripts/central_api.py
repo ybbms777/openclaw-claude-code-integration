@@ -25,6 +25,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, asdict, field
 from collections import defaultdict
+
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
 import statistics
 
 from fastapi import FastAPI, HTTPException, Query, Body
@@ -134,11 +140,12 @@ class CentralStore:
     """中央知识库存储"""
 
     def __init__(self, storage_dir: str = None):
-        self.storage_dir = Path(storage_dir or os.environ.get(
-            "KNOWLEDGE_FEDERATION_STORAGE",
-            "~/.openclaw/knowledge-federation-central"
-        ))
-        self.storage_dir = self.storage_dir.expanduser()
+        resolver = WorkspaceResolver.from_workspace()
+        default_storage = resolver.layout.state_dir / "knowledge-federation-central"
+        self._explicit_storage = storage_dir is not None
+        self.storage_dir = Path(
+            storage_dir or os.environ.get("KNOWLEDGE_FEDERATION_STORAGE", str(default_storage))
+        ).expanduser()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
         self.rules_file = self.storage_dir / "rules.json"
@@ -148,8 +155,10 @@ class CentralStore:
         self._rules: Dict[str, CommunityRule] = {}
         self._agents: Set[str] = set()
         self._adoptions: Dict[str, int] = defaultdict(int)
+        self._rule_response_cache: Dict[str, RuleResponse] = {}
 
-        self._load()
+        if not self._explicit_storage:
+            self._load()
 
     def _load(self):
         """从磁盘加载数据"""
@@ -284,14 +293,7 @@ class CentralStore:
                 if not any(v.author_agent == author_agent for v in rule.versions):
                     continue
 
-            results.append(RuleResponse(
-                rule_id=rule.rule_id,
-                versions=[asdict(v) for v in rule.versions],
-                effectiveness_score=rule.leaderboard_score,
-                adoption_count=rule.adoption_count,
-                leaderboard_position=rule.leaderboard_position,
-                leaderboard_score=rule.leaderboard_score,
-            ))
+            results.append(self._to_rule_response(rule))
 
         return results
 
@@ -307,6 +309,9 @@ class CentralStore:
             return False
         self._rules[rule_id].adoption_count += 1
         self._adoptions[rule_id] += 1
+        cached = self._rule_response_cache.get(rule_id)
+        if cached is not None:
+            cached.adoption_count = self._rules[rule_id].adoption_count
         self._refresh_leaderboard()
         self._save()
         return True
@@ -390,6 +395,29 @@ class CentralStore:
         )
         for i, rule in enumerate(sorted_rules):
             rule.leaderboard_position = i + 1
+            cached = self._rule_response_cache.get(rule.rule_id)
+            if cached is not None:
+                cached.leaderboard_position = rule.leaderboard_position
+                cached.leaderboard_score = rule.leaderboard_score
+                cached.effectiveness_score = rule.leaderboard_score
+
+    def _to_rule_response(self, rule: CommunityRule) -> RuleResponse:
+        cached = self._rule_response_cache.get(rule.rule_id)
+        payload = {
+            "rule_id": rule.rule_id,
+            "versions": [asdict(v) for v in rule.versions],
+            "effectiveness_score": rule.leaderboard_score,
+            "adoption_count": rule.adoption_count,
+            "leaderboard_position": rule.leaderboard_position,
+            "leaderboard_score": rule.leaderboard_score,
+        }
+        if cached is None:
+            cached = RuleResponse(**payload)
+            self._rule_response_cache[rule.rule_id] = cached
+            return cached
+        for key, value in payload.items():
+            setattr(cached, key, value)
+        return cached
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -413,6 +441,13 @@ app.add_middleware(
 
 # 全局存储实例
 store: Optional[CentralStore] = None
+
+
+def get_store() -> CentralStore:
+    global store
+    if store is None:
+        store = CentralStore()
+    return store
 
 
 @app.on_event("startup")
@@ -444,7 +479,7 @@ async def health():
 @app.post("/federation/publish", response_model=PublishResponse)
 async def publish_rule(req: PublishRequest):
     """发布规则到中央知识库"""
-    return store.publish_rule(req)
+    return get_store().publish_rule(req)
 
 
 @app.get("/federation/rules", response_model=List[RuleResponse])
@@ -455,13 +490,13 @@ async def get_rules(
 ):
     """查询规则"""
     tag_list = tags.split(",") if tags else None
-    return store.get_rules(tags=tag_list, min_score=min_score, author_agent=author)
+    return get_store().get_rules(tags=tag_list, min_score=min_score, author_agent=author)
 
 
 @app.get("/federation/rules/{rule_id}", response_model=RuleResponse)
 async def get_rule(rule_id: str):
     """获取特定规则"""
-    rules = store.get_rules()
+    rules = get_store().get_rules()
     for rule in rules:
         if rule.rule_id == rule_id:
             return rule
@@ -477,7 +512,7 @@ async def subscribe_rules(
 ):
     """订阅社群规则"""
     tag_list = tags.split(",") if tags else None
-    return store.subscribe_rules({"tags": tag_list, "min_score": min_score})
+    return get_store().subscribe_rules({"tags": tag_list, "min_score": min_score})
 
 
 # ─── 排行榜 ─────────────────────────────────────────────────────────────
@@ -485,7 +520,7 @@ async def subscribe_rules(
 @app.get("/federation/leaderboard", response_model=List[LeaderboardEntry])
 async def get_leaderboard(limit: int = Query(10, ge=1, le=100)):
     """获取规则效能排行榜"""
-    return store.get_leaderboard(limit=limit)
+    return get_store().get_leaderboard(limit=limit)
 
 
 # ─── 采纳记录 ────────────────────────────────────────────────────────────
@@ -493,7 +528,7 @@ async def get_leaderboard(limit: int = Query(10, ge=1, le=100)):
 @app.post("/federation/adopt/{rule_id}")
 async def record_adoption(rule_id: str):
     """记录规则被采纳"""
-    success = store.record_adoption(rule_id)
+    success = get_store().record_adoption(rule_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"规则 {rule_id} 不存在")
     return {"success": True, "rule_id": rule_id}
@@ -504,7 +539,7 @@ async def record_adoption(rule_id: str):
 @app.post("/federation/resolve", response_model=ResolveConflictResponse)
 async def resolve_conflict(req: ResolveConflictRequest = Body(...)):
     """解决规则冲突"""
-    return store.resolve_conflict(
+    return get_store().resolve_conflict(
         req.local_rule,
         req.community_rule,
         req.strategy,
@@ -516,7 +551,7 @@ async def resolve_conflict(req: ResolveConflictRequest = Body(...)):
 @app.get("/federation/stats", response_model=StatsResponse)
 async def get_stats():
     """获取中央知识库统计信息"""
-    return store.get_statistics()
+    return get_store().get_statistics()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -535,13 +570,16 @@ def main():
     if args.storage:
         os.environ["KNOWLEDGE_FEDERATION_STORAGE"] = args.storage
 
+    resolver = WorkspaceResolver.from_workspace()
+    default_storage = str(resolver.layout.state_dir / "knowledge-federation-central")
+
     print(f"""
 ╔══════════════════════════════════════════════════════════════╗
 ║     OpenClaw 知识联邦中央 API v2.0.0                      ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  地址: http://{args.host}:{args.port}                          ║
 ║  文档: http://{args.host}:{args.port}/docs                    ║
-║  存储: {os.environ.get('KNOWLEDGE_FEDERATION_STORAGE', '~/.openclaw/knowledge-federation-central'):<40}  ║
+║  存储: {os.environ.get('KNOWLEDGE_FEDERATION_STORAGE', default_storage):<40}  ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
 

@@ -14,6 +14,11 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
 
 @dataclass
 class FusionScore:
@@ -38,14 +43,14 @@ class MultiSourceFusionEngine:
         Args:
             workspace_dir: OpenClaw工作目录
         """
-        self.workspace = Path(workspace_dir or
-                             os.path.expanduser("~/.openclaw/workspace"))
+        self.resolver = WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
 
         # 数据源路径
-        self.lancedb_dir = self.workspace / "memory" / "lancedb-pro"
-        self.cmd_log = self.workspace / ".command-execution.jsonl"
-        self.user_log = self.workspace / ".user-interactions.jsonl"
-        self.fusion_log = self.workspace / ".fusion-decisions.jsonl"
+        self.lancedb_dir = self.resolver.lancedb_dir()
+        self.cmd_log = self.resolver.log_file("command-execution")
+        self.user_log = self.resolver.log_file("user-interactions")
+        self.fusion_log = self.resolver.log_file("fusion-decisions")
 
         # 权重配置（可调）
         self.weights = {

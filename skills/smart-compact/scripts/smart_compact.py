@@ -24,6 +24,12 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.session import SessionResolver
+from oeck.runtime_core.workspace import WorkspaceResolver
 from skills.shared.config import (
     SESSIONS_DIR,
     COMPACT_THRESHOLD,
@@ -34,6 +40,7 @@ from skills.shared.config import (
 from skills.shared.logger import get_logger
 
 logger = get_logger(__name__)
+SESSION_RESOLVER = SessionResolver(WorkspaceResolver.from_workspace())
 
 # ─── Telegram ───────────────────────────────────────────────────────────────
 
@@ -123,14 +130,9 @@ def get_current_session_messages(limit: int = 50) -> list[dict]:
         logger.warning(f"获取 session 失败: {e}")
 
     # fallback：读取 transcript 文件
-    transcripts = sorted(
-        Path.home().glob(".openclaw/agents/main/sessions/*.jsonl"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True
-    )
     messages = []
-    if transcripts:
-        latest = transcripts[0]
+    latest = SESSION_RESOLVER.latest_transcript_path()
+    if latest:
         logger.info(f"读取 transcript: {latest.name} ({latest.stat().st_size} bytes)")
         with open(latest) as f:
             for line in f:
@@ -352,11 +354,7 @@ def generate_summary(messages: list[dict], strategy: str) -> str:
 
 
 def get_latest_session_file() -> Path | None:
-    transcripts = sorted(
-        Path.home().glob(".openclaw/agents/main/sessions/*.jsonl"),
-        key=lambda p: p.stat().st_mtime, reverse=True
-    )
-    return transcripts[0] if transcripts else None
+    return SESSION_RESOLVER.latest_transcript_path()
 
 
 def compact_session(force: bool = False) -> dict:

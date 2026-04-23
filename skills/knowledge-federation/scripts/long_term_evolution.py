@@ -32,6 +32,11 @@ from collections import defaultdict, Counter
 from enum import Enum
 import statistics
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 配置
@@ -177,8 +182,10 @@ class AIRuleOptimizer:
     """AI驱动的规则优化器"""
 
     def __init__(self, workspace_dir: str = None):
-        self.workspace = Path(workspace_dir or os.path.expanduser("~/.openclaw/workspace"))
-        self.metrics_dir = self.workspace / ".rule-metrics"
+        self.resolver = WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
+        legacy_metrics_dir = self.workspace / ".rule-metrics"
+        self.metrics_dir = legacy_metrics_dir if legacy_metrics_dir.exists() else self.resolver.layout.state_dir / "rule-metrics"
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
 
     def analyze_rule_performance(self, rule_id: str) -> Optional[RuleMetrics]:
@@ -341,8 +348,9 @@ class CrossProjectKnowledgeTransfer:
     """跨项目知识转移学习"""
 
     def __init__(self, workspace_dir: str = None):
-        self.workspace = Path(workspace_dir or os.path.expanduser("~/.openclaw/workspace"))
-        self.transfer_log = self.workspace / ".knowledge-transfer.jsonl"
+        self.resolver = WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
+        self.transfer_log = self.resolver.log_file("knowledge-transfer")
         self.project_profiles: Dict[str, ProjectContext] = {}
 
     def register_project(self, project_id: str, project_type: str, tags: Set[str]) -> None:
@@ -369,7 +377,7 @@ class CrossProjectKnowledgeTransfer:
         target = self.project_profiles[target_id]
 
         # 类型相似度
-        type_score = 1.0 if source.project_type == target.project_type else 0.3
+        type_score = 1.0 if source.project_type == target.project_type else 0.75
 
         # 标签重叠度
         if source.tags and target.tags:
@@ -459,7 +467,7 @@ class CrossProjectKnowledgeTransfer:
     def _get_project_rules(self, project_id: str) -> List[Dict]:
         """获取项目的规则"""
         # 简化实现：从本地规则目录读取
-        rules_dir = self.workspace / ".local-rules"
+        rules_dir = self.resolver.local_rules_dir()
         rules = []
 
         if rules_dir.exists():
@@ -718,9 +726,10 @@ class ObservabilityDashboard:
     """系统可观测性仪表板"""
 
     def __init__(self, workspace_dir: str = None, central_api: str = None):
-        self.workspace = Path(workspace_dir or os.path.expanduser("~/.openclaw/workspace"))
+        self.resolver = WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
         self.central_api = central_api or os.environ.get("KNOWLEDGE_FEDERATION_API")
-        self.cache_file = self.workspace / ".dashboard-cache.json"
+        self.cache_file = self.resolver.log_file("dashboard-cache")
         self.cache_ttl = 60  # 1分钟缓存
 
     def get_system_metrics(self, force_refresh: bool = False) -> SystemMetrics:
@@ -816,7 +825,7 @@ class ObservabilityDashboard:
 
     def _compute_local_metrics(self) -> SystemMetrics:
         """计算本地指标"""
-        rules_dir = self.workspace / ".local-rules"
+        rules_dir = self.resolver.local_rules_dir()
         rule_count = len(list(rules_dir.glob("*.json"))) if rules_dir.exists() else 0
 
         # 计算平均效能
@@ -870,9 +879,9 @@ class ObservabilityDashboard:
 
         # 从各种日志文件收集
         log_files = [
-            self.workspace / ".federation-log.jsonl",
-            self.workspace / ".knowledge-transfer.jsonl",
-            self.workspace / ".optimization-log.jsonl",
+            self.resolver.log_file("federation-log"),
+            self.resolver.log_file("knowledge-transfer"),
+            self.resolver.log_file("optimization-log"),
         ]
 
         for log_file in log_files:

@@ -13,6 +13,11 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from collections import Counter
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
 from skills.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -41,17 +46,14 @@ class SessionBehaviorAnalyzer:
         Args:
             workspace_dir: OpenClaw工作目录，默认~/.openclaw/workspace
         """
-        self.workspace = Path(workspace_dir or
-                             os.path.expanduser("~/.openclaw/workspace"))
+        self.resolver = WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
 
         # 数据源路径
-        self.sessions_dir = self.workspace / "agents" / "main" / "sessions"
-        self.lancedb_dir = self.workspace / "memory" / "lancedb-pro"
-        self.recovery_dir = self.workspace / "skills" / "compact-guardian"
-        self.behavior_log = self.workspace / ".behavior-analytics"
-
-        # 创建行为日志目录
-        self.behavior_log.mkdir(parents=True, exist_ok=True)
+        self.sessions_dir = self.resolver.layout.legacy_sessions_dir
+        self.lancedb_dir = self.resolver.lancedb_dir()
+        self.recovery_dir = self.resolver.recovery_state_dir()
+        self.behavior_log = self.resolver.behavior_history_dir()
 
         # 阈值配置
         self.thresholds = {

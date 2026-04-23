@@ -14,6 +14,11 @@ from dataclasses import dataclass, asdict, field
 from collections import defaultdict
 import statistics
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
 
 @dataclass
 class RuleMetrics:
@@ -51,13 +56,13 @@ class RuleOptimizer:
         Args:
             workspace_dir: OpenClaw工作目录
         """
-        self.workspace = Path(workspace_dir or
-                             os.path.expanduser("~/.openclaw/workspace"))
+        self.resolver = WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
 
         # 数据源路径
-        self.rule_metrics_log = self.workspace / ".rule-metrics.jsonl"
-        self.rule_variants_log = self.workspace / ".rule-variants.jsonl"
-        self.ab_test_results = self.workspace / ".ab-test-results.jsonl"
+        self.rule_metrics_log = self.resolver.log_file("rule-metrics")
+        self.rule_variants_log = self.resolver.log_file("rule-variants")
+        self.ab_test_results = self.resolver.log_file("ab-test-results")
 
         # 创建日志目录
         self.rule_metrics_log.parent.mkdir(parents=True, exist_ok=True)

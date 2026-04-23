@@ -73,7 +73,7 @@ DANGEROUS_OPERATIONS = {
 DANGEROUS_PATHS = {
     "/.ssh": 95,
     "/.aws": 95,
-    "/etc/": 90,
+    "/etc/": 98,
     "/usr/bin": 85,
     "/usr/local/bin": 80,
     "/bin/": 85,
@@ -193,6 +193,9 @@ class PermissionScorer:
 
         path_lower = path.lower()
 
+        if path_lower.startswith("/tmp/") or path_lower == "/tmp":
+            return 10.0
+
         # 检查危险路径前缀
         for danger_path, score in DANGEROUS_PATHS.items():
             if path_lower.startswith(danger_path.lower()):
@@ -204,7 +207,7 @@ class PermissionScorer:
                 return float(score)
 
         # 用户目录是相对安全的（但仍有风险）
-        if "~" in path or "/home/" in path_lower or "/Users/" in path_lower:
+        if "~" in path or "/home/" in path_lower or "/users/" in path_lower:
             return 25.0
 
         # 未知路径（中等风险）

@@ -17,6 +17,12 @@ from collections import defaultdict
 from enum import Enum
 import statistics
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from oeck.runtime_core.workspace import WorkspaceResolver
+
 
 class RuleSource(Enum):
     """规则来源"""
@@ -80,9 +86,10 @@ class CommunityRule:
 class LocalRuleRegistry:
     """本地规则注册表"""
 
-    def __init__(self, workspace_dir: str):
-        self.workspace = Path(workspace_dir)
-        self.rules_dir = self.workspace / ".local-rules"
+    def __init__(self, workspace_dir: str, resolver: WorkspaceResolver | None = None):
+        self.resolver = resolver or WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
+        self.rules_dir = self.resolver.local_rules_dir()
         self.rules_dir.mkdir(parents=True, exist_ok=True)
         self.rules: Dict[str, RuleVersion] = {}
 
@@ -247,22 +254,22 @@ class KnowledgeFederation:
             workspace_dir: OpenClaw工作目录
             central_api: 中央知识库API (如http://localhost:8000)
         """
-        self.workspace = Path(workspace_dir or
-                             os.path.expanduser("~/.openclaw/workspace"))
+        self.resolver = WorkspaceResolver.from_workspace(workspace_dir)
+        self.workspace = self.resolver.layout.workspace_root
         self.central_api = central_api or os.environ.get("KNOWLEDGE_FEDERATION_API")
 
         self.agent_id = os.environ.get("OPENCLAW_AGENT_ID", str(uuid.uuid4())[:8])
         self.project_id = os.environ.get("PROJECT_ID", "default")
 
         # 本地组件
-        self.local_registry = LocalRuleRegistry(str(self.workspace))
+        self.local_registry = LocalRuleRegistry(str(self.workspace), resolver=self.resolver)
         self.conflict_resolver = ConflictResolver()
         self.leaderboard = CommunityLeaderboard()
 
         # 持久化路径
-        self.federation_log = self.workspace / ".federation-log.jsonl"
-        self.conflict_log = self.workspace / ".conflict-log.jsonl"
-        self.published_rules = self.workspace / ".published-rules.json"
+        self.federation_log = self.resolver.log_file("federation-log")
+        self.conflict_log = self.resolver.log_file("conflict-log")
+        self.published_rules = self.resolver.log_file("published-rules")
 
         self.federation_log.parent.mkdir(parents=True, exist_ok=True)
 
@@ -386,7 +393,7 @@ class KnowledgeFederation:
             versions.insert(0, current)
             if current.parent_version:
                 # 从本地查找父版本
-                rule_file = self.workspace / ".local-rules" / f"{rule_id}_{current.parent_version}.json"
+                rule_file = self.local_registry.rules_dir / f"{rule_id}_{current.parent_version}.json"
                 if rule_file.exists():
                     with open(rule_file, 'r') as f:
                         parent_data = json.load(f)
